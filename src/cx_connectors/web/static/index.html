@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your database → CanvasXpress</title>
+
+  <link  href="https://www.canvasxpress.org/dist/canvasXpress.css" rel="stylesheet" type="text/css">
+  <script src="https://www.canvasxpress.org/dist/canvasXpress.min.js"></script>
+
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 960px; }
+    fieldset { border: 1px solid #ddd; border-radius: 8px; margin-bottom: 16px; padding: 14px 16px; }
+    legend { font-size: 13px; color: #555; padding: 0 6px; }
+    label { display: inline-block; min-width: 90px; }
+    input, select, button, textarea { padding: 6px 8px; font: inherit; }
+    input[type=text], input[type=password], textarea { width: 340px; }
+    textarea { vertical-align: top; height: 48px; font-family: ui-monospace, monospace; }
+    .row { margin: 6px 0; }
+    #who { color: #1f9d63; font-size: 14px; }
+    #status { color: #555; margin: 10px 0; }
+    #status.error { color: #b00020; white-space: pre-wrap; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h2>Chart your own database</h2>
+
+  <!-- Login / signup -->
+  <fieldset id="authBox">
+    <legend>Sign in</legend>
+    <div class="row"><label>Username</label><input id="u" type="text" autocomplete="username"></div>
+    <div class="row"><label>Password</label><input id="p" type="password" autocomplete="current-password"></div>
+    <div class="row">
+      <button id="login">Log in</button>
+      <button id="signup">Sign up</button>
+      <span style="color:#888">&nbsp;demo: alice/alicepw · bob/bobpw</span>
+    </div>
+  </fieldset>
+
+  <!-- Everything below requires a session -->
+  <div id="app" class="hidden">
+    <div class="row" style="margin-bottom:12px">
+      <span id="who"></span> &nbsp; <button id="logout">Log out</button>
+    </div>
+
+    <fieldset>
+      <legend>Register a database (connection string stays server-side, encrypted)</legend>
+      <div class="row"><label>Name</label><input id="sName" type="text" placeholder="my-genes"></div>
+      <div class="row"><label>Conn URL</label><input id="sConn" type="text"
+           placeholder="sqlite:///path.db  ·  postgresql+psycopg://user:pw@host/db"></div>
+      <div class="row"><label>SELECT</label><textarea id="sSql"
+           placeholder="SELECT sample, GeneA, GeneB, category FROM expression"></textarea></div>
+      <div class="row"><button id="addSource">Save source</button></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Chart a source</legend>
+      <div class="row">
+        <label>Source</label>
+        <select id="source"></select>
+        <button id="load">Load &amp; chart</button>
+        <button id="del">Delete</button>
+      </div>
+    </fieldset>
+  </div>
+
+  <div id="status"></div>
+  <canvas id="cx" width="900" height="500"></canvas>
+
+  <script>
+    var statusEl = document.getElementById("status");
+    function setStatus(m, e) { statusEl.className = e ? "error" : ""; statusEl.textContent = m; }
+
+    function jpost(url, body) {
+      return fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {})
+      });
+    }
+    function asError(r) { return r.json().then(function (e) { throw new Error(e.detail || r.statusText); }); }
+
+    // Reflect auth state and, when logged in, load this user's source list.
+    function refresh() {
+      return fetch("/auth/me").then(function (r) { return r.json(); }).then(function (s) {
+        var authed = !!s.user;
+        document.getElementById("authBox").classList.toggle("hidden", authed);
+        document.getElementById("app").classList.toggle("hidden", !authed);
+        document.getElementById("who").textContent = authed ? ("Signed in as " + s.user) : "";
+        if (authed) { return loadSources(); }
+      });
+    }
+
+    function loadSources() {
+      return fetch("/api/sources").then(function (r) { return r.json(); }).then(function (d) {
+        var sel = document.getElementById("source");
+        sel.innerHTML = "";
+        (d.sources || []).forEach(function (name) {
+          var o = document.createElement("option"); o.value = o.textContent = name; sel.appendChild(o);
+        });
+      });
+    }
+
+    document.getElementById("login").addEventListener("click", function () {
+      jpost("/auth/login", { username: u.value, password: p.value })
+        .then(function (r) { return r.ok ? r.json() : asError(r); })
+        .then(refresh).then(function () { setStatus("Logged in."); })
+        .catch(function (e) { setStatus(e.message, true); });
+    });
+    document.getElementById("signup").addEventListener("click", function () {
+      jpost("/auth/signup", { username: u.value, password: p.value })
+        .then(function (r) { return r.ok ? r.json() : asError(r); })
+        .then(refresh).then(function () { setStatus("Account created."); })
+        .catch(function (e) { setStatus(e.message, true); });
+    });
+    document.getElementById("logout").addEventListener("click", function () {
+      jpost("/auth/logout").then(refresh).then(function () { setStatus("Logged out."); });
+    });
+
+    document.getElementById("addSource").addEventListener("click", function () {
+      jpost("/api/sources", {
+        name: sName.value, conn_url: sConn.value, sql: sSql.value
+      }).then(function (r) { return r.ok ? r.json() : asError(r); })
+        .then(loadSources).then(function () { setStatus("Source saved."); })
+        .catch(function (e) { setStatus(e.message, true); });
+    });
+
+    document.getElementById("del").addEventListener("click", function () {
+      var name = document.getElementById("source").value;
+      if (!name) { return; }
+      fetch("/api/sources/" + encodeURIComponent(name), { method: "DELETE" })
+        .then(loadSources).then(function () { setStatus("Deleted " + name); });
+    });
+
+    document.getElementById("load").addEventListener("click", function () {
+      var name = document.getElementById("source").value;
+      if (!name) { setStatus("Register and select a source first.", true); return; }
+      setStatus("Querying your database…");
+      fetch("/api/data?source=" + encodeURIComponent(name))
+        .then(function (r) { return r.ok ? r.json() : asError(r); })
+        .then(function (data) {
+          new CanvasXpress("cx", data, {
+            graphType: "Bar", title: "From your database",
+            xAxisTitle: "Sample", yAxisTitle: "Value", graphOrientation: "vertical"
+          });
+          setStatus("Rendered ✓  (" + data.y.smps.length + " samples, " +
+                    data.y.vars.length + " variables)");
+        })
+        .catch(function (e) { setStatus(e.message, true); });
+    });
+
+    refresh();
+  </script>
+</body>
+</html>

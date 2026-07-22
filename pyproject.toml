@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "canvasxpress-connectors"
+version = "0.1.0"
+description = "Feed CanvasXpress from authenticated data sources (databases, Google Sheets) — reshape rows into CanvasXpress data objects behind your own origin."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Isaac Neuhaus" }]
+keywords = ["canvasxpress", "visualization", "google-sheets", "oauth", "data-proxy"]
+
+# The CORE (reshape + store + DataSource protocol) has NO heavy deps.
+dependencies = [
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+# Install only what your sources/serving need.
+sql = ["SQLAlchemy>=2.0"]
+sheets = ["google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.120"]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0"]
+all = [
+    "SQLAlchemy>=2.0",
+    "google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.120",
+    "fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0",
+]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/neuhausi/canvasxpress-connectors"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cx_connectors"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
