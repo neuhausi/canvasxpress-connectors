@@ -1,5 +1,7 @@
 # Google Sheets → CanvasXpress (per-user OAuth)
 
+![Google Sheets example chart](screenshot.png)
+
 Each user connects **their own** Google account; the app reads **their** private sheet
 and charts it. The browser never sees a Google token or URL. Uses
 `cx_connectors.web.create_sheets_app`.

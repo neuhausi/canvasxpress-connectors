@@ -1,5 +1,7 @@
 # Bring-your-own-database → CanvasXpress (multi-tenant, with login)
 
+![Bring-your-own-database example chart](screenshot.png)
+
 The advanced database example: each user **logs into the app**, registers **their own**
 database connection (stored encrypted), and charts **their own** data. Users are
 isolated by session. Uses `cx_connectors.web.create_byo_app`.

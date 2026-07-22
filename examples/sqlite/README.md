@@ -1,5 +1,7 @@
 # SQLite → CanvasXpress
 
+![SQLite example chart](screenshot.png)
+
 The smallest example: read a local SQLite file with `SqlSource`, reshape to a
 CanvasXpress object, chart it. No authentication (one app-owned database) — this is the
 pure data-path demo.

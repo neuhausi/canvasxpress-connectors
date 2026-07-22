@@ -1,5 +1,7 @@
 # Postgres → CanvasXpress
 
+![Postgres example chart](screenshot.png)
+
 Same as the SQLite example, but against a real Postgres server — showing that
 `SqlSource` is driver-agnostic: only the connection URL changes.
 
