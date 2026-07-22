@@ -14,6 +14,8 @@ Browser (CanvasXpress)  ──►  your app (this package)  ──►  authentic
    no secrets                 auth + encrypted creds        DB / Google Sheets
 ```
 
+![Example CanvasXpress bar chart rendered from data reshaped by canvasxpress-connectors](docs/screenshot.png)
+
 ## Install
 
 ```bash

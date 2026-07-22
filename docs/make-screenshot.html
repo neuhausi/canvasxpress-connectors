@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Make README screenshot — canvasxpress-connectors</title>
+
+  <link  href="https://www.canvasxpress.org/dist/canvasXpress.css" rel="stylesheet" type="text/css">
+  <script src="https://www.canvasxpress.org/dist/canvasXpress.min.js"></script>
+
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    #hint { color: #555; margin: 10px 0 16px; }
+    button { padding: 8px 16px; cursor: pointer; font: inherit; }
+  </style>
+</head>
+<body>
+  <h3>canvasxpress-connectors — sample render</h3>
+  <p id="hint">
+    This renders the same CanvasXpress object the package produces. Click the button to
+    download <code>screenshot.png</code>, then drop it in the repo at <code>docs/screenshot.png</code>.
+  </p>
+  <button id="save">Download screenshot.png</button>
+  <br><br>
+
+  <!-- CanvasXpress draws into this canvas -->
+  <canvas id="cx" width="900" height="520"></canvas>
+
+  <script>
+    // The exact CanvasXpress data object cx_connectors.reshape.rows_to_cx produces
+    // from the demo table (sample id, GeneA..D numeric, Category/Group annotations).
+    var data = {
+      y: {
+        vars: ["GeneA", "GeneB", "GeneC", "GeneD"],
+        smps: ["Sample1", "Sample2", "Sample3", "Sample4",
+               "Sample5", "Sample6", "Sample7", "Sample8"],
+        data: [
+          [11, 25, 12, 22, 15, 21, 19, 28],   // GeneA
+          [13, 16,  9, 23, 24, 11, 20, 14],   // GeneB
+          [14, 17, 10, 25, 24, 17, 13, 22],   // GeneC
+          [15, 18, 11, 26, 25, 18, 16, 12]    // GeneD
+        ]
+      },
+      x: {
+        Category: ["A", "A", "A", "B", "B", "B", "C", "C"],
+        Group:    ["X", "X", "Y", "Y", "Z", "Z", "X", "Z"]
+      }
+    };
+
+    // Same config as the demo apps' front ends.
+    var config = {
+      graphType: "Bar",
+      title: "canvasxpress-connectors — data via reshape.rows_to_cx",
+      subtitle: "Bar chart from an authenticated source (DB / Google Sheets)",
+      xAxisTitle: "Sample",
+      yAxisTitle: "Value",
+      graphOrientation: "vertical",
+      showLegend: true,
+      colorScheme: "CanvasXpress",
+      backgroundType: "solid",
+      background: "#ffffff"
+    };
+
+    var cx = new CanvasXpress("cx", data, config);
+
+    // Download the rendered canvas as a PNG. CanvasXpress draws to #cx, so the
+    // canvas' own toDataURL captures exactly what you see.
+    document.getElementById("save").addEventListener("click", function () {
+      // Small delay lets any pending draw settle before we snapshot.
+      setTimeout(function () {
+        var canvas = document.getElementById("cx");
+        var link = document.createElement("a");
+        link.download = "screenshot.png";
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      }, 150);
+    });
+  </script>
+</body>
+</html>
