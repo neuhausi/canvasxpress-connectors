@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SQLite → CanvasXpress</title>
+
+  <link  href="https://www.canvasxpress.org/dist/canvasXpress.css" rel="stylesheet" type="text/css">
+  <script src="https://www.canvasxpress.org/dist/canvasXpress.min.js"></script>
+
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    #status { color: #555; margin: 10px 0; }
+    #status.error { color: #b00020; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h2>Charting a SQLite database via canvasxpress-connectors</h2>
+  <div id="status">Loading…</div>
+  <canvas id="cx" width="900" height="500"></canvas>
+
+  <script>
+    var statusEl = document.getElementById("status");
+    function setStatus(m, e) { statusEl.className = e ? "error" : ""; statusEl.textContent = m; }
+
+    // The server ran the SQL and reshaped rows into a CanvasXpress object.
+    // The browser only ever talks to this app's own /api/data endpoint.
+    fetch("/api/data")
+      .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t); }); })
+      .then(function (data) {
+        new CanvasXpress("cx", data, {
+          graphType: "Bar",
+          title: "From SQLite (via /api/data)",
+          xAxisTitle: "Sample",
+          yAxisTitle: "Value",
+          graphOrientation: "vertical"
+        });
+        setStatus("Rendered ✓  (" + data.y.smps.length + " samples, " +
+                  data.y.vars.length + " variables)");
+      })
+      .catch(function (err) { setStatus(err.message, true); });
+  </script>
+</body>
+</html>

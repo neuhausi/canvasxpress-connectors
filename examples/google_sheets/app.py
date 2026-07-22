@@ -12,7 +12,7 @@ Prereqs:
     export TOKEN_ENCRYPTION_KEY=$(python -c \
         "from cx_connectors.store import generate_key; print(generate_key())")
     export OAUTHLIB_INSECURE_TRANSPORT=1   # localhost http only; remove in production
-    python examples/run_sheets.py          # http://localhost:8080
+    uvicorn app:app --port 8080            # run from examples/google_sheets/
 """
 
 

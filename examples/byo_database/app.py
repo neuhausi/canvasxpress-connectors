@@ -1,8 +1,9 @@
 """Run the bring-your-own-database demo app.
 
     pip install -e ".[all]"
-    python examples/seed_demo.py     # creates alice & bob + their own SQLite DBs
-    python examples/run_byo.py       # http://localhost:8100
+    cd examples/byo_database
+    python seed_demo.py              # creates alice & bob + their own SQLite DBs
+    uvicorn app:app --port 8100      # http://localhost:8100
 
 Demonstrates that the whole authenticated app is a few lines once the package does
 the work.
