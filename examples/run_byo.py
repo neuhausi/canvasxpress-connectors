@@ -10,8 +10,8 @@ the work.
 
 import os
 
-from dotenv import load_dotenv
 import uvicorn
+from dotenv import load_dotenv
 
 from cx_connectors.web import create_byo_app
 

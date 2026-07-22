@@ -7,7 +7,7 @@ small class — nothing else in the stack changes.
 
 from __future__ import annotations
 
-from typing import Any, List, Protocol, Sequence, Tuple, runtime_checkable
+from typing import Any, Protocol, Sequence, Tuple, runtime_checkable
 
 
 @runtime_checkable

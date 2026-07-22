@@ -1,11 +1,10 @@
-import os
 import sqlite3
 
 import pytest
 
-from cx_connectors.store import Store, generate_key
-from cx_connectors.sources.sql import SqlSource, ReadOnlyViolation
 from cx_connectors.sources.base import to_cx
+from cx_connectors.sources.sql import ReadOnlyViolation, SqlSource
+from cx_connectors.store import Store, generate_key
 
 
 @pytest.fixture
@@ -50,7 +49,8 @@ def test_sql_source_end_to_end(tmp_path):
     conn.execute("CREATE TABLE t (sample TEXT, v INT, grp TEXT)")
     conn.executemany("INSERT INTO t VALUES (?,?,?)",
                      [("s1", 10, "X"), ("s2", 20, "Y")])
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
     cx = to_cx(SqlSource("sqlite:///" + path, "SELECT sample, v, grp FROM t ORDER BY sample"))
     assert cx["y"]["smps"] == ["s1", "s2"]

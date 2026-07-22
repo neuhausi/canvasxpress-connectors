@@ -22,9 +22,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from ..store import TokenStore
 from ..reshape import rows_to_cx
 from ..sources.google_sheets import GoogleSheetsSource
+from ..store import TokenStore
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static_sheets")
 

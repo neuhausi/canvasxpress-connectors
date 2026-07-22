@@ -2,7 +2,6 @@ import pytest
 
 from cx_connectors.reshape import rows_to_cx
 
-
 HEADER = ["sample", "GeneA", "GeneB", "Category", "Group"]
 ROWS = [
     ["Sample1", 11, 13, "A", "X"],

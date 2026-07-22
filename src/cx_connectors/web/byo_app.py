@@ -19,9 +19,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from ..store import Store
 from ..reshape import rows_to_cx
-from ..sources.sql import SqlSource, ReadOnlyViolation
+from ..sources.sql import ReadOnlyViolation, SqlSource
+from ..store import Store
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 

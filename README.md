@@ -47,7 +47,7 @@ Return `data` as JSON from an endpoint; the page does `new CanvasXpress("cx", da
 | Reshape | `cx_connectors.reshape` | rows → CanvasXpress `{y, x}` (core, no heavy deps) |
 | Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource` |
 | Store | `cx_connectors.store` | users (PBKDF2) + per-user **encrypted** connection strings |
-| Web | `cx_connectors.web` | `create_byo_app()` — a mountable FastAPI app |
+| Web | `cx_connectors.web` | `create_byo_app()` (database, login) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
 
 Adding a backend (BigQuery, a REST API, CSV) = one class with a `read()` returning
 `(header, rows)`. Nothing else changes.

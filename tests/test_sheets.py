@@ -5,14 +5,13 @@ the source's reshape via an injected fake Sheets service, encrypted token storag
 and that /api/sheet-data enforces auth (401) without a connected user.
 """
 
-import os
 import sqlite3
 
 import pytest
 
-from cx_connectors.store import TokenStore, generate_key
-from cx_connectors.sources.google_sheets import GoogleSheetsSource
 from cx_connectors.sources.base import to_cx
+from cx_connectors.sources.google_sheets import GoogleSheetsSource
+from cx_connectors.store import TokenStore, generate_key
 
 
 class _FakeSheets:
