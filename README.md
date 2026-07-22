@@ -1,6 +1,9 @@
 # canvasxpress-connectors
 
 [![CI](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml/badge.svg)](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/canvasxpress-connectors)](https://pypi.org/project/canvasxpress-connectors/)
+[![Python versions](https://img.shields.io/pypi/pyversions/canvasxpress-connectors)](https://pypi.org/project/canvasxpress-connectors/)
+[![License: MIT](https://img.shields.io/pypi/l/canvasxpress-connectors)](LICENSE)
 
 Feed [CanvasXpress](https://www.canvasxpress.org/) from **authenticated** data sources —
 databases and Google Sheets — by reshaping query results into CanvasXpress data objects
@@ -108,6 +111,26 @@ Connection strings are SQLAlchemy URLs; add the driver and go:
 - For production: HTTPS + `https_only=True` cookies, rate-limit `/auth/login`, secrets from a
   manager (not `.env`), and pool engines per source.
 
+## Releasing
+
+Releases publish to PyPI automatically via **Trusted Publishing** (OIDC — no API
+tokens). To cut a release:
+
+1. Bump `version` in `pyproject.toml` (PyPI rejects re-publishing an existing version).
+2. Commit, then tag and push:
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+3. The `release.yml` workflow builds the sdist + wheel, runs `twine check`, and
+   publishes to PyPI. Watch it under the repo's **Actions** tab.
+
+The one-time setup (already done for this project) is a PyPI *pending publisher* bound to
+`owner=neuhausi`, `repo=canvasxpress-connectors`, `workflow=release.yml`,
+`environment=pypi`. To require manual approval before a publish, add yourself as a
+required reviewer on the `pypi` environment (repo **Settings → Environments → pypi**).
+
 ## License
 
 MIT
+
