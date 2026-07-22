@@ -121,3 +121,74 @@ class Store:
                 "DELETE FROM sources WHERE username = ? AND name = ?", (username, name)
             )
             self._conn.commit()
+
+
+class TokenStore:
+    """Per-user OAuth refresh tokens, encrypted at rest.
+
+    Keyed by an opaque user id (e.g. a signed-session uid). The refresh token is the
+    long-lived secret; access tokens are derived from it on demand and never stored.
+    Used by the Google Sheets web app, where each browser user connects their own
+    Google account.
+    """
+
+    def __init__(self, db_path: str, encryption_key: str):
+        self._fernet = Fernet(encryption_key.encode("utf-8"))
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tokens (
+                user_id        TEXT PRIMARY KEY,
+                refresh_enc    BLOB NOT NULL,
+                token_uri      TEXT NOT NULL,
+                client_id      TEXT NOT NULL,
+                client_secret  TEXT NOT NULL,
+                scopes         TEXT NOT NULL,
+                email          TEXT
+            )
+            """
+        )
+        self._conn.commit()
+
+    def save(self, user_id, refresh_token, token_uri, client_id,
+             client_secret, scopes, email=None):
+        refresh_enc = self._fernet.encrypt(refresh_token.encode("utf-8"))
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO tokens
+                    (user_id, refresh_enc, token_uri, client_id, client_secret, scopes, email)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    refresh_enc=excluded.refresh_enc, token_uri=excluded.token_uri,
+                    client_id=excluded.client_id, client_secret=excluded.client_secret,
+                    scopes=excluded.scopes, email=excluded.email
+                """,
+                (user_id, refresh_enc, token_uri, client_id, client_secret,
+                 " ".join(scopes), email),
+            )
+            self._conn.commit()
+
+    def load(self, user_id):
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT refresh_enc, token_uri, client_id, client_secret, scopes, email "
+                "FROM tokens WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "refresh_token": self._fernet.decrypt(row[0]).decode("utf-8"),
+            "token_uri": row[1],
+            "client_id": row[2],
+            "client_secret": row[3],
+            "scopes": row[4].split(),
+            "email": row[5],
+        }
+
+    def delete(self, user_id):
+        with self._lock:
+            self._conn.execute("DELETE FROM tokens WHERE user_id = ?", (user_id,))
+            self._conn.commit()

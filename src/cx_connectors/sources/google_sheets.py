@@ -12,16 +12,21 @@ from typing import Any, List, Sequence, Tuple
 
 
 class GoogleSheetsSource:
-    def __init__(self, credentials, spreadsheet_id: str, cell_range: str = "A1:Z1000"):
+    def __init__(self, credentials, spreadsheet_id: str, cell_range: str = "A1:Z1000",
+                 service=None):
         self.credentials = credentials
         self.spreadsheet_id = spreadsheet_id
         self.cell_range = cell_range
+        self._service = service  # inject a prebuilt Sheets service (used in tests)
 
     def read(self) -> Tuple[Sequence[str], Sequence[Sequence[Any]]]:
-        # Lazy import so the core package doesn't require the Google libraries.
-        from googleapiclient.discovery import build
+        sheets = self._service
+        if sheets is None:
+            # Lazy import so the core package doesn't require the Google libraries.
+            from googleapiclient.discovery import build
 
-        sheets = build("sheets", "v4", credentials=self.credentials, cache_discovery=False)
+            sheets = build("sheets", "v4", credentials=self.credentials,
+                           cache_discovery=False)
         resp = (
             sheets.spreadsheets()
             .values()

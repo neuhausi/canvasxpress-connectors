@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chart your Google Sheet — CanvasXpress</title>
+
+  <link  href="https://www.canvasxpress.org/dist/canvasXpress.css" rel="stylesheet" type="text/css">
+  <script src="https://www.canvasxpress.org/dist/canvasXpress.min.js"></script>
+
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 960px; }
+    #bar, #picker { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    input { padding: 6px 8px; font: inherit; }
+    input[type=text] { flex: 1; min-width: 280px; }
+    button { padding: 6px 14px; cursor: pointer; font: inherit; }
+    #who { color: #1f9d63; font-size: 14px; }
+    #status { color: #555; margin: 10px 0; }
+    #status.error { color: #b00020; white-space: pre-wrap; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <h2>Chart your own Google Sheet</h2>
+
+  <div id="bar">
+    <button id="connect">Connect Google Sheets</button>
+    <span id="who" class="hidden"></span>
+    <button id="disconnect" class="hidden">Disconnect</button>
+  </div>
+
+  <div id="picker" class="hidden">
+    <input id="url" type="text" placeholder="Paste a Google Sheet URL or spreadsheet ID">
+    <input id="range" type="text" value="A1:Z1000" size="10" title="A1 range">
+    <button id="load">Load &amp; chart</button>
+  </div>
+
+  <div id="status"></div>
+  <canvas id="cx" width="900" height="500"></canvas>
+
+  <script>
+    var statusEl = document.getElementById("status");
+    function setStatus(m, e) { statusEl.className = e ? "error" : ""; statusEl.textContent = m; }
+
+    function extractId(input) {
+      var m = input.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+      return m ? m[1] : input.trim();
+    }
+
+    function refresh() {
+      return fetch("/api/status").then(function (r) { return r.json(); }).then(function (s) {
+        document.getElementById("connect").classList.toggle("hidden", s.connected);
+        document.getElementById("disconnect").classList.toggle("hidden", !s.connected);
+        document.getElementById("picker").classList.toggle("hidden", !s.connected);
+        var who = document.getElementById("who");
+        who.classList.toggle("hidden", !s.connected);
+        who.textContent = s.connected ? ("Connected" + (s.email ? " as " + s.email : "")) : "";
+      });
+    }
+
+    document.getElementById("connect").addEventListener("click", function () {
+      window.location.href = "/oauth/login";
+    });
+    document.getElementById("disconnect").addEventListener("click", function () {
+      fetch("/oauth/disconnect", { method: "POST" }).then(refresh).then(function () {
+        setStatus("Disconnected.");
+      });
+    });
+
+    document.getElementById("load").addEventListener("click", function () {
+      var id = extractId(document.getElementById("url").value);
+      var range = document.getElementById("range").value || "A1:Z1000";
+      if (!id) { setStatus("Paste a Google Sheet URL or ID first.", true); return; }
+      setStatus("Reading your sheet…");
+      var qs = "?spreadsheetId=" + encodeURIComponent(id) + "&range=" + encodeURIComponent(range);
+      fetch("/api/sheet-data" + qs)
+        .then(function (r) {
+          if (r.status === 401) { throw new Error("Session expired — reconnect Google."); }
+          if (!r.ok) { return r.json().then(function (e) { throw new Error(e.detail || r.statusText); }); }
+          return r.json();
+        })
+        .then(function (data) {
+          new CanvasXpress("cx", data, {
+            graphType: "Bar", title: "Your Google Sheet",
+            xAxisTitle: "Sample", yAxisTitle: "Value", graphOrientation: "vertical"
+          });
+          setStatus("Rendered ✓  (" + data.y.smps.length + " samples, " +
+                    data.y.vars.length + " variables)");
+        })
+        .catch(function (err) { setStatus(err.message, true); });
+    });
+
+    refresh();
+  </script>
+</body>
+</html>

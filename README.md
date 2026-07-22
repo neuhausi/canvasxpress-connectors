@@ -1,5 +1,7 @@
 # canvasxpress-connectors
 
+[![CI](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml/badge.svg)](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml)
+
 Feed [CanvasXpress](https://www.canvasxpress.org/) from **authenticated** data sources —
 databases and Google Sheets — by reshaping query results into CanvasXpress data objects
 served from **your own origin**. The browser never holds a credential.
@@ -62,11 +64,31 @@ python examples/run_byo.py       # http://localhost:8100
 
 Log in as `alice`/`alicepw` and `bob`/`bobpw` (incognito) — each sees only their own rows.
 
+## Runnable demo — Google Sheets, per-user OAuth
+
+Each user connects **their own** Google account; the app reads **their** private sheet.
+The browser never sees a Google token or URL.
+
+Prereqs: a Google OAuth **Web application** client (Cloud Console → Credentials) with
+redirect URI `http://localhost:8080/oauth/callback`, and the **Google Sheets API** enabled.
+
+```bash
+pip install -e ".[all]"
+export GOOGLE_CLIENT_ID=...  GOOGLE_CLIENT_SECRET=...
+export OAUTH_REDIRECT_URI=http://localhost:8080/oauth/callback
+export SESSION_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+export TOKEN_ENCRYPTION_KEY=$(python -c "from cx_connectors.store import generate_key;print(generate_key())")
+export OAUTHLIB_INSECURE_TRANSPORT=1     # localhost http only; remove in production
+python examples/run_sheets.py            # http://localhost:8080 → Connect Google Sheets
+```
+
 ## Use it inside your own FastAPI
 
 ```python
-from cx_connectors.web import create_byo_app
-app = create_byo_app(https_only=True)      # mount routes into your service
+from cx_connectors.web import create_byo_app, create_sheets_app
+app = create_byo_app(https_only=True)      # database app: login + per-user DBs
+# or
+app = create_sheets_app(https_only=True)   # Google Sheets app: per-user OAuth
 ```
 
 Or just the pieces — call `SqlSource` / `GoogleSheetsSource` + `rows_to_cx` from your
