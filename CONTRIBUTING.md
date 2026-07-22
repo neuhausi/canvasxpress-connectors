@@ -45,5 +45,19 @@ Add a matching test in `tests/` (inject a fake client so tests need no network �
 
 ## Releases
 
-Maintainers only — see the "Releasing" section in the README. In short: bump the version
-in `pyproject.toml`, tag `vX.Y.Z`, and push the tag; Trusted Publishing does the rest.
+Maintainers only. Releases publish to PyPI automatically via **Trusted Publishing**
+(OIDC — no API tokens). To cut a release:
+
+1. Bump `version` in `pyproject.toml` (PyPI rejects re-publishing an existing version).
+2. Commit, then tag and push:
+   ```bash
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+3. The `release.yml` workflow builds the sdist + wheel, runs `twine check`, and
+   publishes to PyPI. Watch it under the repo's **Actions** tab.
+
+The one-time setup (already done for this project) is a PyPI *pending publisher* bound to
+`owner=neuhausi`, `repo=canvasxpress-connectors`, `workflow=release.yml`,
+`environment=pypi`. To require manual approval before a publish, add yourself as a
+required reviewer on the `pypi` environment (repo **Settings → Environments → pypi**).
