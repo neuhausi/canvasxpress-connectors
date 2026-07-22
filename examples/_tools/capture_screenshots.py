@@ -8,7 +8,6 @@ of the package (it lives outside src/); it just regenerates the README images.
 """
 
 import base64
-import json
 import os
 
 from playwright.sync_api import sync_playwright
