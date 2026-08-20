@@ -72,6 +72,10 @@
     var statusEl = document.getElementById("status");
     function setStatus(m, e) { statusEl.className = e ? "error" : ""; statusEl.textContent = m; }
 
+    // Resolve API paths against the prefix this app is mounted under, so the
+    // same page works at / and behind a reverse-proxy subpath (e.g. /connectors/).
+    var BASE = location.pathname.replace(/\/[^/]*$/, "");
+    function api(path) { return BASE + path; }
     function jpost(url, body) {
       return fetch(url, {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -82,7 +86,7 @@
 
     // Reflect auth state and, when logged in, load this user's source list.
     function refresh() {
-      return fetch("/auth/me").then(function (r) { return r.json(); }).then(function (s) {
+      return fetch(api("/auth/me")).then(function (r) { return r.json(); }).then(function (s) {
         var authed = !!s.user;
         document.getElementById("authBox").classList.toggle("hidden", authed);
         document.getElementById("app").classList.toggle("hidden", !authed);
@@ -92,7 +96,7 @@
     }
 
     function loadSources() {
-      return fetch("/api/sources").then(function (r) { return r.json(); }).then(function (d) {
+      return fetch(api("/api/sources")).then(function (r) { return r.json(); }).then(function (d) {
         var sel = document.getElementById("source");
         sel.innerHTML = "";
         (d.sources || []).forEach(function (name) {
@@ -102,23 +106,23 @@
     }
 
     document.getElementById("login").addEventListener("click", function () {
-      jpost("/auth/login", { username: u.value, password: p.value })
+      jpost(api("/auth/login"), { username: u.value, password: p.value })
         .then(function (r) { return r.ok ? r.json() : asError(r); })
         .then(refresh).then(function () { setStatus("Logged in."); })
         .catch(function (e) { setStatus(e.message, true); });
     });
     document.getElementById("signup").addEventListener("click", function () {
-      jpost("/auth/signup", { username: u.value, password: p.value })
+      jpost(api("/auth/signup"), { username: u.value, password: p.value })
         .then(function (r) { return r.ok ? r.json() : asError(r); })
         .then(refresh).then(function () { setStatus("Account created."); })
         .catch(function (e) { setStatus(e.message, true); });
     });
     document.getElementById("logout").addEventListener("click", function () {
-      jpost("/auth/logout").then(refresh).then(function () { setStatus("Logged out."); });
+      jpost(api("/auth/logout")).then(refresh).then(function () { setStatus("Logged out."); });
     });
 
     document.getElementById("addSource").addEventListener("click", function () {
-      jpost("/api/sources", {
+      jpost(api("/api/sources"), {
         name: sName.value, conn_url: sConn.value, sql: sSql.value
       }).then(function (r) { return r.ok ? r.json() : asError(r); })
         .then(loadSources).then(function () { setStatus("Source saved."); })
@@ -128,7 +132,7 @@
     document.getElementById("del").addEventListener("click", function () {
       var name = document.getElementById("source").value;
       if (!name) { return; }
-      fetch("/api/sources/" + encodeURIComponent(name), { method: "DELETE" })
+      fetch(api("/api/sources/") + encodeURIComponent(name), { method: "DELETE" })
         .then(loadSources).then(function () { setStatus("Deleted " + name); });
     });
 
@@ -136,7 +140,7 @@
       var name = document.getElementById("source").value;
       if (!name) { setStatus("Register and select a source first.", true); return; }
       setStatus("Querying your database…");
-      fetch("/api/data?source=" + encodeURIComponent(name))
+      fetch(api("/api/data?source=") + encodeURIComponent(name))
         .then(function (r) { return r.ok ? r.json() : asError(r); })
         .then(function (data) {
           new CanvasXpress("cx", data, {

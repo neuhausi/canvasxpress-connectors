@@ -113,6 +113,99 @@ Connection strings are SQLAlchemy URLs; add the driver and go:
 - For production: HTTPS + `https_only=True` cookies, rate-limit `/auth/login`, secrets from a
   manager (not `.env`), and pool engines per source.
 
+## Deploying the BYO-database demo behind a reverse-proxy subpath (canvasxpress.org)
+
+The demo runs as a plain localhost uvicorn service exposed by Apache under a
+path prefix — the same pattern as the
+[canvasxpress-mcp](https://github.com/neuhausi/canvasxpress-mcp) server. The
+demo UI (`src/cx_connectors/web/static/index.html`) derives its API base from
+the path it is served under, so it works at `/` in development and at
+`/connectors/` in production. The deployment at
+`https://www.canvasxpress.org/connectors/` was set up exactly as follows
+(2026-08-20).
+
+### 1 — Install (as the site user)
+
+```bash
+ssh canvasxpress@canvasxpress.org -p 7822
+git clone https://github.com/neuhausi/canvasxpress-connectors.git
+cd canvasxpress-connectors
+python3 -m venv .venv
+.venv/bin/pip install -e '.[all]'
+```
+
+### 2 — Persistent secrets + demo seed
+
+Secrets live in `examples/byo_database/.env` (gitignored, `chmod 600`) so the
+encrypted connection strings survive restarts:
+
+```bash
+cd examples/byo_database
+EK=$(../../.venv/bin/python -c 'from cx_connectors.store import generate_key;print(generate_key())')
+SS=$(../../.venv/bin/python -c 'import secrets;print(secrets.token_urlsafe(32))')
+printf 'ENCRYPTION_KEY=%s\nSESSION_SECRET=%s\nHTTPS_ONLY=1\nMOUNT_PREFIX=/connectors\n' "$EK" "$SS" > .env
+chmod 600 .env
+../../.venv/bin/python seed_demo.py     # users alice/alicepw & bob/bobpw
+```
+
+`HTTPS_ONLY=1` marks the session cookie Secure (the app sits behind Apache
+TLS). The cookie is named `cxc_session` so it can't collide with the co-hosted
+canvasxpress-dashboards app (`cxd_session`).
+
+`MOUNT_PREFIX` is needed because cPanel's LiteSpeed (which parses the Apache
+config) forwards the request path **unstripped** through a
+`ProxyPass`-in-`<Location>` — the backend receives `/connectors/...`, not
+`/...`. With the prefix set, `examples/byo_database/app.py` mounts the app at
+both `/` and `/connectors`, so it works direct and proxied. (On genuine Apache
+httpd, which strips the matched prefix, you can omit it.)
+
+### 3 — Run it on port 8300
+
+Port **8300** avoids the MCP server (8100) and dashboards (8200) on the same
+host. A `server.sh` in the repo root wraps uvicorn:
+
+```bash
+cd ~/canvasxpress-connectors
+./server.sh start        # stop | restart | status
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8300/   # → 200
+```
+
+Logs and pidfile land in `examples/byo_database/`. It does **not** auto-start
+on reboot; add a crontab entry if you want that:
+
+```
+@reboot /home/canvasxpress/canvasxpress-connectors/server.sh start
+```
+
+### 4 — Expose it through Apache (as root, one time)
+
+Shared with the dashboards app — one userdata include, staged at
+`~canvasxpress/dashboards-connectors-proxy.conf`:
+
+```apache
+# Trailing-slash URLs are required: the UI derives its API base from the prefix.
+RedirectMatch ^/connectors$ /connectors/
+
+<Location /connectors>
+    PassengerEnabled Off
+    ProxyPass http://127.0.0.1:8300
+    ProxyPassReverse http://127.0.0.1:8300
+</Location>
+```
+
+```bash
+cp ~canvasxpress/dashboards-connectors-proxy.conf \
+   /etc/apache2/conf.d/userdata/ssl/2_4/canvasxpress/canvasxpress.org/
+/scripts/ensure_vhost_includes --user=canvasxpress
+/scripts/restartsrv_httpd
+```
+
+The demo is then live at `https://www.canvasxpress.org/connectors/`
+(log in as `alice`/`alicepw` or `bob`/`bobpw`).
+
+To update the deployment: `git pull && ./server.sh restart` (re-run
+`pip install -e '.[all]'` if dependencies changed).
+
 ## Contributing
 
 Development setup, linting/tests, how to add a new data source, and the release process

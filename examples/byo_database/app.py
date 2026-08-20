@@ -27,5 +27,16 @@ if "ENCRYPTION_KEY" not in os.environ:
 
 app = create_byo_app()
 
+# Some reverse proxies (e.g. LiteSpeed's ProxyPass-in-<Location>) forward the
+# public path prefix unstripped. Set MOUNT_PREFIX=/connectors to serve the app
+# under that prefix as well as at /.
+_PREFIX = (os.getenv("MOUNT_PREFIX") or "").rstrip("/")
+if _PREFIX:
+    from fastapi import FastAPI
+
+    _inner, app = app, FastAPI(openapi_url=None)
+    app.mount(_PREFIX, _inner)
+    app.mount("/", _inner)
+
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8100)

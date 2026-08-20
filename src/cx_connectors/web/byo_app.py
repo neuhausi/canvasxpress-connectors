@@ -40,11 +40,13 @@ def create_byo_app(
     db_path = db_path or os.getenv("APP_DB_PATH", "app.db")
     if allow_signup is None:
         allow_signup = os.getenv("ALLOW_SIGNUP", "1") == "1"
+    https_only = https_only or os.getenv("HTTPS_ONLY", "0") == "1"
     store = store or Store(db_path, encryption_key)
 
     app = FastAPI(title="canvasxpress-connectors · BYO database")
     app.add_middleware(
-        SessionMiddleware, secret_key=session_secret, same_site="lax", https_only=https_only
+        SessionMiddleware, secret_key=session_secret, same_site="lax", https_only=https_only,
+        session_cookie="cxc_session",  # distinct name so co-hosted apps (e.g. dashboards) don't clobber it
     )
 
     def require_user(request: Request) -> str:
