@@ -56,9 +56,20 @@ class Store:
                 name      TEXT NOT NULL,
                 conn_enc  BLOB NOT NULL,
                 sql       TEXT NOT NULL,
+                updated_at TEXT,
                 PRIMARY KEY (username, name)
             );
             """
+        )
+        # Migration: databases created before updated_at existed gain the column.
+        cols = [r[1] for r in self._conn.execute("PRAGMA table_info(sources)")]
+        if "updated_at" not in cols:
+            self._conn.execute("ALTER TABLE sources ADD COLUMN updated_at TEXT")
+        # Backfill: pre-migration rows get "now" so every source has a date.
+        import datetime as _dt
+        self._conn.execute(
+            "UPDATE sources SET updated_at = ? WHERE updated_at IS NULL",
+            (_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),),
         )
         self._conn.commit()
 
@@ -85,16 +96,20 @@ class Store:
 
     # ---- per-user sources ----
     def save_source(self, username: str, name: str, conn_url: str, sql: str) -> None:
+        import datetime
+
         conn_enc = self._fernet.encrypt(conn_url.encode("utf-8"))
+        updated = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
         with self._lock:
             self._conn.execute(
                 """
-                INSERT INTO sources (username, name, conn_enc, sql)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO sources (username, name, conn_enc, sql, updated_at)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(username, name) DO UPDATE SET
-                    conn_enc=excluded.conn_enc, sql=excluded.sql
+                    conn_enc=excluded.conn_enc, sql=excluded.sql,
+                    updated_at=excluded.updated_at
                 """,
-                (username, name, conn_enc, sql),
+                (username, name, conn_enc, sql, updated),
             )
             self._conn.commit()
 
@@ -104,6 +119,15 @@ class Store:
                 "SELECT name FROM sources WHERE username = ? ORDER BY name", (username,)
             ).fetchall()
         return [r[0] for r in rows]
+
+    def list_sources_meta(self, username: str) -> List[dict]:
+        """Names + last-saved timestamps, for UIs that show source metadata."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT name, updated_at FROM sources WHERE username = ? ORDER BY name",
+                (username,),
+            ).fetchall()
+        return [{"name": r[0], "updated_at": r[1]} for r in rows]
 
     def get_source(self, username: str, name: str) -> Optional[dict]:
         with self._lock:
