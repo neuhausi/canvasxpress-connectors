@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-BUILDERS = {"gencode": "gencode", "wp": "wp", "ccle": "ccle", "tcga": "tcga"}
+BUILDERS = {"gencode": "gencode", "wp": "wp", "ccle": "ccle", "tcga": "tcga", "gtex": "gtex"}
 
 
 def main(argv=None):

@@ -21,9 +21,14 @@ dir (e.g. `/home/canvasxpress/data/sqlite/`) and register a connector source.
 | `wp` | `wp.sqlite` | WikiPathways GMT/GPML + NCBI gene_info/taxonomy |
 | `ccle` | `ccle.sqlite` | CCLE (Figshare) expression/CNV/mutations + GENCODE probemap |
 | `tcga` | `tcga.sqlite` | TCGA PanCanAtlas (Xena) CNV/thresholded-CNV/expression/RPPA/mutations + clinical |
+| `gtex` | `gtex.sqlite` | GTEx v8 gene models + RNASEQ sample annotations + packed tpm |
 
 **Status**
-- `gencode`, `wp` — full download→build pipelines, tested on synthetic inputs.
+- `gencode`, `wp`, `gtex` — full download→build pipelines, tested on synthetic inputs.
+  (GTEx v8 is a frozen release, so its `build()` downloads real files with no drift; the
+  expression is packed with `;`-separated tpm + a single-row `json.samples` template,
+  read by the serving `PackedMatrixSource` via `value_encoding="delimited"` /
+  `template_key=None`.)
 - `ccle`, `tcga` — the **packed-matrix reshape** (`pack_matrix` for CCLE genes-as-columns,
   `pack_rows` for TCGA genes-as-rows), the `json`/`indices`/survival template builders, and
   `assemble()` are complete and tested (a mini build is read back through the Phase-1
