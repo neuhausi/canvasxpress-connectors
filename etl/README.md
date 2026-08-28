@@ -31,8 +31,6 @@ dir (e.g. `/home/canvasxpress/data/sqlite/`) and register a connector source.
   `build()` download wrapper is a stub for both: the sample-info / mutation **column
   layouts drift between releases**, so wire the current URLs + confirm those column
   indices before a real run — the reshape core is format-independent.
-- `refseq` — **not ported**: its build script (genome/hapmap/gwas) was not among the
-  provided Perl sources; `genomeServices.pl` is the *serve* side only.
 
 ## The packed format
 
