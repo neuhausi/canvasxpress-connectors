@@ -1,7 +1,7 @@
 # canvasxpress-connectors
 
 [![CI](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml/badge.svg)](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/canvasxpress-connectors)](https://pypi.org/project/canvasxpress-connectors/)
+[![PyPI](https://img.shields.io/pypi/v/canvasxpress-connectors?v=040)](https://pypi.org/project/canvasxpress-connectors/)
 [![Python versions](https://img.shields.io/badge/python-3.9%2B-blue)](https://pypi.org/project/canvasxpress-connectors/)
 [![License: MIT](https://img.shields.io/pypi/l/canvasxpress-connectors)](LICENSE)
 
