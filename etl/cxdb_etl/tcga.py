@@ -106,6 +106,38 @@ def pack_rows(path: str, sep: str = "\t", na: str = "NA") -> Tuple[List[str], Li
     return labels, sorted_samples, packed
 
 
+def pack_rows_to_file(path: str, out_path: str, id_to_name: Optional[Dict[str, str]] = None,
+                      sep: str = "\t", na: str = "NA") -> List[str]:
+    """Stream a genes-as-rows matrix into a packed output file, returning only the
+    sorted sample list (so the caller holds no per-gene arrays — essential at TCGA
+    scale). When ``id_to_name`` is given (the RNA matrix keyed by gene id), rows are
+    written ``id\\tname\\t[packed]``; otherwise ``name\\t[packed]``.
+
+    :returns: The sorted sample columns.
+    """
+    with open(path, encoding="utf-8") as fin:
+        header = fin.readline().rstrip("\n").split(sep)
+    samples = header[1:]
+    order = sorted(range(len(samples)), key=lambda i: samples[i])
+    sorted_samples = [samples[i] for i in order]
+
+    with open(path, encoding="utf-8") as fin, open(out_path, "w", encoding="utf-8") as fout:
+        fin.readline()
+        for line in fin:
+            if not line.strip():
+                continue
+            row = line.rstrip("\n").split(sep)
+            vals = row[1:]
+            packed = "[" + ",".join(
+                ("null" if (i >= len(vals) or vals[i] == na or vals[i] == "") else vals[i])
+                for i in order) + "]"
+            if id_to_name is not None:
+                fout.write("%s\t%s\t%s\n" % (row[0], id_to_name.get(row[0], row[0]), packed))
+            else:
+                fout.write("%s\t%s\n" % (row[0], packed))
+    return sorted_samples
+
+
 def build_templates(samples: Dict[str, list], sorted_samples: List[str]) -> Dict[str, str]:
     """The four json templates for a data type's sorted sample list.
 
@@ -195,28 +227,21 @@ def assemble(outdir: str, sample_txt: str, gene_txt: str, mutation_txt: str,
     global_pos = {s: i for i, s in enumerate(global_sorted)}
     gene_name_by_id = gene_name_by_id or {}
 
-    packed_sets: Dict[str, Tuple[List[str], List[str], List[str]]] = {}
+    smps_by_key: Dict[str, List[str]] = {}   # only the sample lists are retained
     imports = [(sample_txt, "sample"), (gene_txt, "gene")]
     table_for = {"cnv": "cnv", "cnvt": "cnvt", "rna": "rnaseq", "prt": "rppa"}
 
     for key, path in matrices.items():
-        labels, smps, packed = pack_rows(path)
-        packed_sets[key] = (labels, smps, packed)
         out = os.path.join(outdir, "%s.txt" % key)
-        if key == "rna":
-            ids = labels
-            names = [gene_name_by_id.get(i, i) for i in labels]
-            _write_packed(names, packed, out, ids=ids)
-        else:
-            _write_packed(labels, packed, out)
+        id_map = gene_name_by_id if key == "rna" else None
+        smps_by_key[key] = pack_rows_to_file(path, out, id_to_name=id_map)
         imports.append((out, table_for[key]))
 
     # json templates (per data type) + cross-type correlation templates.
     json_txt = os.path.join(outdir, "json.txt")
     with open(json_txt, "w", encoding="utf-8") as fj:
         for key in matrices:
-            smps = packed_sets[key][1]
-            tpls = build_templates(samples, smps)
+            tpls = build_templates(samples, smps_by_key[key])
             for suffix, s in tpls.items():
                 fj.write("%s%s\t%s\n" % (key, suffix, s))
         # Cross pairs present in both, on the z axis (correlation view).
@@ -224,8 +249,8 @@ def assemble(outdir: str, sample_txt: str, gene_txt: str, mutation_txt: str,
         for a in keys:
             for b in keys:
                 if a < b:
-                    pa = pair_indices(packed_sets[a][1], packed_sets[b][1])
-                    paired = [packed_sets[a][1][i] for i in pa[0]]
+                    pa = pair_indices(smps_by_key[a], smps_by_key[b])
+                    paired = [smps_by_key[a][i] for i in pa[0]]
                     for suffix in ("2min", "2med"):
                         tpls = build_templates(samples, paired)
                         fj.write("%s-%s%s\t%s\n" % (a, b, suffix, tpls[suffix]))
@@ -234,13 +259,13 @@ def assemble(outdir: str, sample_txt: str, gene_txt: str, mutation_txt: str,
     index_txt = os.path.join(outdir, "index.txt")
     with open(index_txt, "w", encoding="utf-8") as fi:
         for key in matrices:
-            fi.write("%s\t%s\n" % (key, json.dumps(single_indices(global_pos, packed_sets[key][1]))))
+            fi.write("%s\t%s\n" % (key, json.dumps(single_indices(global_pos, smps_by_key[key]))))
         keys = list(matrices)
         for a in keys:
             for b in keys:
                 if a < b:
                     fi.write("%s-%s\t%s\n" % (a, b, json.dumps(
-                        pair_indices(packed_sets[a][1], packed_sets[b][1]))))
+                        pair_indices(smps_by_key[a], smps_by_key[b]))))
 
     imports += [(json_txt, "json"), (index_txt, "indices")]
     db_path = os.path.join(outdir, "tcga.sqlite")
@@ -248,11 +273,165 @@ def assemble(outdir: str, sample_txt: str, gene_txt: str, mutation_txt: str,
     return db_path
 
 
-def build(outdir: str, keep: bool = False) -> str:  # pragma: no cover - needs downloads
-    """Full download→build pipeline. Not exercised in tests (needs the large Xena
-    dumps). Wire the Xena URLs + confirm the clinical/mutation column layouts against
-    current files, then call ``assemble``; see the SCHEMA note above."""
-    raise NotImplementedError(
-        "tcga.build downloads the current Xena PanCanAtlas files; wire the URLs and "
-        "the sample/mutation column layouts to current files, then call assemble()."
-    )
+# --- Xena PanCanAtlas source files (frozen v8 / 2016-2017 releases) ---
+_HUB_TCGA = "https://tcga-xena-hub.s3.us-east-1.amazonaws.com/download/"
+_HUB_TOIL = "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/"
+_HUB_PAN = "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/"
+URLS = {
+    "cnv": _HUB_TCGA + "TCGA.PANCAN.sampleMap%2FGistic2_CopyNumber_Gistic2_all_data_by_genes.gz",
+    "cnvt": _HUB_TCGA + "TCGA.PANCAN.sampleMap%2FGistic2_CopyNumber_Gistic2_all_thresholded.by_genes.gz",
+    "rna": _HUB_TOIL + "tcga_RSEM_gene_tpm.gz",
+    "probemap": _HUB_TOIL + "probeMap%2Fgencode.v23.annotation.gene.probemap",
+    "clinical": _HUB_PAN + "Survival_SupplementalTable_S1_20171025_xena_sp",
+    "disease": _HUB_PAN + "TCGA_phenotype_denseDataOnlyDownload.tsv.gz",
+    "protein": _HUB_PAN + "TCGA-RPPA-pancan-clean.xena.gz",
+    "mutation": _HUB_PAN + "mc3.v0.2.8.PUBLIC.xena.gz",
+    "probemap2": _HUB_PAN + "probeMap%2Fhugo_gencode_good_hg19_V24lift37_probemap",
+}
+
+
+def create_samples(disease_path: str, clinical_path: str, out_sample: str) -> None:
+    """Merge the phenotype (sample_type, primary_disease) and clinical (Survival
+    supplement) files into sample.txt: ``id`` + 35 columns + ``idx``. Only samples
+    present in both (35 clinical columns filled) are written. Mirrors the Perl.
+    """
+    samples: Dict[str, list] = {}
+    with open(disease_path, encoding="utf-8") as fin:
+        next(fin, None)
+        for line in fin:
+            f = line.rstrip("\n").split("\t")
+            if len(f) < 4:
+                continue
+            samples[f[0]] = [f[2], f[3]]            # [sample_type, primary_disease]
+    with open(clinical_path, encoding="utf-8") as fin:
+        header = fin.readline().rstrip("\n").split("\t")
+        gcols = len(header) - 1
+        for line in fin:
+            f = line.rstrip("\n").split("\t")
+            sid = f[0]
+            if sid not in samples:
+                continue
+            for i in range(gcols):
+                val = f[i + 1] if i + 1 < len(f) else ""
+                # index 2 onward = clinical columns
+                lst = samples[sid]
+                while len(lst) <= i + 2:
+                    lst.append("")
+                lst[i + 2] = val
+    complete = 2 + gcols   # samples with the full clinical row
+    with open(out_sample, "w", encoding="utf-8") as fs:
+        idx = 0
+        for sid in sorted(samples):
+            row = samples[sid]
+            if len(row) != complete:
+                continue
+            fs.write("%s\t%s\t%d\n" % (sid, "\t".join(row), idx))
+            idx += 1
+
+
+def create_genes(probemap: str, probemap2: str, out_gene: str) -> None:
+    """Build gene.txt (id, name, chrom, start, end, strand, exonCount, exonStarts,
+    exonEnds) from the two Xena probemaps, mirroring the Perl (probemap2 supplies exon
+    coordinates; probemap is the id/name spine)."""
+    coords: Dict[str, list] = {}
+    with open(probemap2, encoding="utf-8") as fin:
+        next(fin, None)
+        for line in fin:
+            l = line.rstrip("\n").split("\t")
+            if len(l) < 11:
+                continue
+            gene, chrom, start, end, strand, n = l[1], l[2], l[3], l[4], l[5], l[8]
+            # Perl: @l=col9, @o=col10; o[i]+=start; l[i]+=o[i]; exonStarts=o, exonEnds=l
+            l_raw = [x for x in l[9].split(",") if x != ""]
+            o_raw = [x for x in l[10].split(",") if x != ""]
+            try:
+                s0 = int(start)
+                o = [int(o_raw[i]) + s0 for i in range(len(o_raw))]
+                ll = [int(l_raw[i]) + o[i] for i in range(min(len(l_raw), len(o)))]
+            except ValueError:
+                o, ll = [], []
+            coords[gene] = [chrom, start, end, strand, n,
+                            ",".join(str(x) for x in o), ",".join(str(x) for x in ll)]
+    with open(probemap, encoding="utf-8") as fin, open(out_gene, "w", encoding="utf-8") as fout:
+        next(fin, None)
+        for line in fin:
+            l = line.rstrip("\n").split("\t")
+            if len(l) < 5:
+                continue
+            if l[1] in coords:
+                fout.write("%s\t%s\t%s\n" % (l[0], l[1], "\t".join(coords[l[1]])))
+            else:
+                fout.write("%s\t1\t%s\t%s\n" % ("\t".join(l), l[3], l[4]))
+
+
+def create_mutations(mc3_path: str, sample_txt: str, out_mutation: str) -> None:
+    """Build mutation.txt from the mc3 file: every mc3 column plus the sample idx
+    (from sample.txt's order). Mirrors the Perl."""
+    pos = {}
+    with open(sample_txt, encoding="utf-8") as fin:
+        for i, line in enumerate(fin):
+            pos[line.split("\t", 1)[0]] = i
+    with open(mc3_path, encoding="utf-8") as fin, open(out_mutation, "w", encoding="utf-8") as fout:
+        next(fin, None)
+        for line in fin:
+            f = line.rstrip("\n").split("\t")
+            idx = pos.get(f[0], "")
+            fout.write("\t".join(f + [str(idx)]) + "\n")
+
+
+def _gene_name_by_id(gene_txt: str) -> Dict[str, str]:
+    out = {}
+    with open(gene_txt, encoding="utf-8") as fin:
+        for line in fin:
+            f = line.rstrip("\n").split("\t")
+            if len(f) >= 2:
+                out[f[0]] = f[1]
+    return out
+
+
+def build(outdir: str, keep: bool = False) -> str:
+    """Full download→build pipeline for the frozen Xena PanCanAtlas release.
+
+    Downloads the CNV / thresholded-CNV / expression / RPPA matrices, the phenotype +
+    clinical + mutation files and the two probemaps, reshapes them, and assembles
+    ``tcga.sqlite``.
+    :returns: Path to ``tcga.sqlite``.
+    """
+    os.makedirs(outdir, exist_ok=True)
+
+    def fetch(key, name, gz=False):
+        dest = os.path.join(outdir, name)
+        from .common import download, gunzip
+        path = download(URLS[key], dest + (".gz" if gz else ""))
+        return gunzip(path) if gz else path
+
+    disease = fetch("disease", "disease.tsv", gz=True)
+    clinical = fetch("clinical", "clinical.tsv")
+    probemap = fetch("probemap", "probemap.txt")
+    probemap2 = fetch("probemap2", "probemap2.txt")
+    mutation_src = fetch("mutation", "mc3.xena", gz=True)
+    cnv = fetch("cnv", "cnv.gct", gz=True)
+    cnvt = fetch("cnvt", "cnvt.gct", gz=True)
+    rna = fetch("rna", "rna.gct", gz=True)
+    prt = fetch("protein", "rppa.xena", gz=True)
+
+    sample_txt = os.path.join(outdir, "sample.txt")
+    gene_txt = os.path.join(outdir, "gene.txt")
+    mutation_txt = os.path.join(outdir, "mutation.txt")
+    create_samples(disease, clinical, sample_txt)
+    create_genes(probemap, probemap2, gene_txt)
+    create_mutations(mutation_src, sample_txt, mutation_txt)
+
+    db = assemble(outdir, sample_txt, gene_txt, mutation_txt,
+                  matrices={"cnv": cnv, "cnvt": cnvt, "rna": rna, "prt": prt},
+                  gene_name_by_id=_gene_name_by_id(gene_txt))
+
+    if not keep:
+        for f in (disease, clinical, probemap, probemap2, mutation_src, cnv, cnvt, rna, prt,
+                  sample_txt, gene_txt, mutation_txt,
+                  os.path.join(outdir, "cnv.txt"), os.path.join(outdir, "cnvt.txt"),
+                  os.path.join(outdir, "rna.txt"), os.path.join(outdir, "prt.txt"),
+                  os.path.join(outdir, "json.txt"), os.path.join(outdir, "index.txt")):
+            if os.path.exists(f):
+                os.remove(f)
+    return db

@@ -43,3 +43,28 @@ def test_tcga_pack_and_roundtrip(tmp_path):
     assert m["x"]["gender"] == ["Female", "Male"]
     c = PackedMatrixSource(url, "cnv", "gistic2", "cnv1min", genes=["TP53"]).read_cx()
     assert c["y"]["data"] == [[0.5, 0.2]]
+
+
+def test_tcga_create_samples_and_mutations(tmp_path):
+    # disease: sample, ?, sample_type, primary_disease
+    (tmp_path / "disease.tsv").write_text(
+        "sample\tx\tsample_type\tprimary_disease\n"
+        "S1\t.\tTumor\tBreast Cancer\nS2\t.\tTumor\tLung Cancer\n")
+    # clinical: header with 3 cols after id -> gcols=3 (patient, cancer_abbr, age)
+    (tmp_path / "clinical.tsv").write_text(
+        "sample\tpatient\tcancer_type_abbreviation\tage\n"
+        "S1\tp1\tBRCA\t50\nS2\tp2\tLUAD\t61\n")
+    sample_txt = tmp_path / "sample.txt"
+    tcga.create_samples(str(tmp_path / "disease.tsv"), str(tmp_path / "clinical.tsv"), str(sample_txt))
+    rows = [l.rstrip("\n").split("\t") for l in open(sample_txt)]
+    # id + [sample_type, primary_disease, patient, cancer_abbr, age] + idx = 7 cols
+    assert rows[0] == ["S1", "Tumor", "Breast Cancer", "p1", "BRCA", "50", "0"]
+    assert rows[1][0] == "S2" and rows[1][-1] == "1"
+
+    (tmp_path / "mc3.xena").write_text(
+        "sample\tchr\tstart\n" "S1\tchr17\t100\nSX\tchr1\t5\n")
+    mut = tmp_path / "mut.txt"
+    tcga.create_mutations(str(tmp_path / "mc3.xena"), str(sample_txt), str(mut))
+    mrows = [l.rstrip("\n").split("\t") for l in open(mut)]
+    assert mrows[0] == ["S1", "chr17", "100", "0"]     # idx from sample.txt order
+    assert mrows[1] == ["SX", "chr1", "5", ""]         # unknown sample -> blank idx

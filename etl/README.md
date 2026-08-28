@@ -29,13 +29,17 @@ dir (e.g. `/home/canvasxpress/data/sqlite/`) and register a connector source.
   expression is packed with `;`-separated tpm + a single-row `json.samples` template,
   read by the serving `PackedMatrixSource` via `value_encoding="delimited"` /
   `template_key=None`.)
-- `ccle`, `tcga` — the **packed-matrix reshape** (`pack_matrix` for CCLE genes-as-columns,
-  `pack_rows` for TCGA genes-as-rows), the `json`/`indices`/survival template builders, and
-  `assemble()` are complete and tested (a mini build is read back through the Phase-1
-  `PackedMatrixSource` — for TCGA including the `1min`/`1med` annotation sets). The
-  `build()` download wrapper is a stub for both: the sample-info / mutation **column
-  layouts drift between releases**, so wire the current URLs + confirm those column
-  indices before a real run — the reshape core is format-independent.
+- `tcga` — full download→build pipeline (the Xena PanCanAtlas files are frozen dated
+  releases): CNV / thresholded-CNV / expression / RPPA matrices packed **streaming to
+  disk** (`pack_rows_to_file`, so no per-gene arrays are held at ~60k×10k scale), the
+  clinical/phenotype merge (`create_samples`), the two-probemap gene build, the mc3
+  mutations, and the `1min`/`1med` + correlation + survival templates. A mini build is
+  read back through the Phase-1 `PackedMatrixSource`.
+- `ccle` — the **packed-matrix reshape** (`pack_matrix`, genes-as-columns), the
+  `json`/`indices` template builders, and `assemble()` are complete and tested (round-trip
+  through `PackedMatrixSource`). The `build()` download wrapper is a stub: the CCLE
+  sample-info / mutation **column layouts drift between Figshare releases**, so wire the
+  current URLs + confirm those column indices before a real run.
 
 ## The packed format
 
