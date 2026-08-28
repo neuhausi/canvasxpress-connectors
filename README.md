@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml/badge.svg)](https://github.com/neuhausi/canvasxpress-connectors/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/canvasxpress-connectors)](https://pypi.org/project/canvasxpress-connectors/)
-[![Python versions](https://img.shields.io/pypi/pyversions/canvasxpress-connectors)](https://pypi.org/project/canvasxpress-connectors/)
+[![Python versions](https://img.shields.io/badge/python-3.9%2B-blue)](https://pypi.org/project/canvasxpress-connectors/)
 [![License: MIT](https://img.shields.io/pypi/l/canvasxpress-connectors)](LICENSE)
 
 Feed [CanvasXpress](https://www.canvasxpress.org/) from **authenticated** data sources —
@@ -383,7 +383,7 @@ the path it is served under, so it works at `/` in development and at
 ### 1 — Install (as the site user)
 
 ```bash
-ssh canvasxpress@canvasxpress.org -p 7822
+ssh <deploy-user>@<your-host> -p <ssh-port>
 git clone https://github.com/neuhausi/canvasxpress-connectors.git
 cd canvasxpress-connectors
 python3 -m venv .venv
