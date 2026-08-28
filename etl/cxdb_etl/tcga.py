@@ -267,7 +267,7 @@ def assemble(outdir: str, sample_txt: str, gene_txt: str, mutation_txt: str,
                     fi.write("%s-%s\t%s\n" % (a, b, json.dumps(
                         pair_indices(smps_by_key[a], smps_by_key[b]))))
 
-    imports += [(json_txt, "json"), (index_txt, "indices")]
+    imports += [(mutation_txt, "mutation"), (json_txt, "json"), (index_txt, "indices")]
     db_path = os.path.join(outdir, "tcga.sqlite")
     build_sqlite(db_path, SCHEMA, imports)
     return db_path

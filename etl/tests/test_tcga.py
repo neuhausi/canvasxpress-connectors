@@ -44,6 +44,10 @@ def test_tcga_pack_and_roundtrip(tmp_path):
     c = PackedMatrixSource(url, "cnv", "gistic2", "cnv1min", genes=["TP53"]).read_cx()
     assert c["y"]["data"] == [[0.5, 0.2]]
 
+    import sqlite3
+    n = sqlite3.connect(db).execute("SELECT COUNT(*) FROM mutation").fetchone()[0]
+    assert n == 1, "mutation.txt must be imported into the mutation table"
+
 
 def test_tcga_create_samples_and_mutations(tmp_path):
     # disease: sample, ?, sample_type, primary_disease
