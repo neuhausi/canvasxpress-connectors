@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "canvasxpress-connectors"
-version = "0.3.0"
+version = "0.4.0"
 description = "Feed CanvasXpress from authenticated data sources (databases, Google Sheets) — reshape rows into CanvasXpress data objects behind your own origin."
 readme = "README.md"
 requires-python = ">=3.9"

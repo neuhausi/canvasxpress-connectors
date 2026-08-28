@@ -96,3 +96,34 @@ def test_data_endpoint_serves_packed_source(tmp_path):
     out = client.get("/api/data", params={"source": "ccle-rna", "genes": "TP53,KRAS"}).json()
     assert out["y"]["vars"] == ["TP53", "KRAS"]
     assert out["x"]["disease"] == ["Lung", "Blood", "Lung"]
+
+
+def _gtex_db(path):
+    """A GTEx-shaped packed DB: expression.tpm is ';'-separated; the template lives
+    in json.samples as a single row (no key)."""
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE json (samples BLOB)")
+    conn.execute("CREATE TABLE expression (geneName TEXT, name TEXT, tpm BLOB)")
+    template = {"data": {"y": {"vars": [], "smps": ["t1", "t2", "t3"], "data": []},
+                         "x": {"tissue": ["Blood", "Brain", "Liver"]}}}
+    conn.execute("INSERT INTO json VALUES (?)", (json.dumps(template),))
+    conn.executemany("INSERT INTO expression VALUES (?, ?, ?)", [
+        ("TP53", "ENSG1", "5.1;2.2;6.3"),
+        ("KRAS", "ENSG2", "1.0;;3.0"),      # missing middle value -> None
+    ])
+    conn.commit()
+    conn.close()
+
+
+def test_packed_gtex_delimited_and_keyless_template(tmp_path):
+    db = str(tmp_path / "gtex.sqlite")
+    _gtex_db(db)
+    data = PackedMatrixSource(
+        "sqlite:///" + db, "expression", "tpm", None,
+        name_col="geneName", json_table="json", template_col="samples",
+        value_encoding="delimited", value_sep=";", genes=["TP53", "KRAS"]).read_cx()
+    assert data["y"]["vars"] == ["TP53", "KRAS"]
+    assert data["y"]["smps"] == ["t1", "t2", "t3"]
+    assert data["y"]["data"][0] == [5.1, 2.2, 6.3]
+    assert data["y"]["data"][1] == [1.0, None, 3.0]     # empty -> None
+    assert data["x"]["tissue"] == ["Blood", "Brain", "Liver"]

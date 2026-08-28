@@ -165,6 +165,20 @@ store.save_source(
 Table/column identifiers come from this server-side config (validated as SQL identifiers);
 gene values are always bound parameters.
 
+The packed encoding is configurable, so the one source type covers CCLE/TCGA **and** GTEx:
+- `value_encoding`: `"json"` (a JSON array, CCLE/TCGA) or `"delimited"` with `value_sep`
+  (GTEx stores tpm as a `;`-separated string).
+- template location: `template_col` (default `str`) and `template_key` — set
+  `template_key` to `null` when the template table holds a single row (GTEx's
+  `json.samples`), otherwise it's looked up by `template_key_col` (default `key`).
+
+```python
+# GTEx: ;-separated tpm, single-row template in json.samples
+config={"table": "expression", "value_col": "tpm", "name_col": "geneName",
+        "template_key": None, "template_col": "samples",
+        "value_encoding": "delimited", "value_sep": ";"}
+```
+
 ## Security notes
 
 - Connection strings / tokens are **Fernet-encrypted at rest**; passwords are PBKDF2-hashed.

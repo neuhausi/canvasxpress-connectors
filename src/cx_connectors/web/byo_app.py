@@ -133,10 +133,14 @@ def create_byo_app(
                 raw = request.query_params.get(gene_param) or ""
                 genes = [g.strip() for g in raw.split(",") if g.strip()]
                 src = PackedMatrixSource(
-                    record["conn_url"], cfg["table"], cfg["value_col"], cfg["template_key"],
+                    record["conn_url"], cfg["table"], cfg["value_col"], cfg.get("template_key"),
                     name_col=cfg.get("name_col", "name"),
                     json_table=cfg.get("json_table", "json"),
                     genes=genes, max_genes=cfg.get("max_genes", 200),
+                    template_col=cfg.get("template_col", "str"),
+                    template_key_col=cfg.get("template_key_col", "key"),
+                    value_encoding=cfg.get("value_encoding", "json"),
+                    value_sep=cfg.get("value_sep", ";"),
                 )
                 return JSONResponse(src.read_cx())
 
