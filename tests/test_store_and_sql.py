@@ -56,3 +56,73 @@ def test_sql_source_end_to_end(tmp_path):
     assert cx["y"]["smps"] == ["s1", "s2"]
     assert cx["y"]["vars"] == ["v"]
     assert cx["x"]["grp"] == ["X", "Y"]
+
+
+def test_bind_param_names_extracts_declared_binds():
+    from cx_connectors.sources.sql import bind_param_names
+    sql = ("SELECT sample, v FROM t "
+           "WHERE (:region IS NULL OR region = :region) AND grp = :grp")
+    assert bind_param_names(sql) == ["region", "grp"]     # deduped, in order
+    assert bind_param_names("SELECT 1") == []
+    # A Postgres ::cast is not a bind parameter.
+    assert bind_param_names("SELECT ts::date FROM t") == []
+
+
+def test_sql_source_binds_params_end_to_end(tmp_path):
+    path = str(tmp_path / "p.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE t (sample TEXT, v INT, region TEXT)")
+    conn.executemany("INSERT INTO t VALUES (?,?,?)",
+                     [("s1", 10, "EMEA"), ("s2", 20, "APAC"), ("s3", 30, "EMEA")])
+    conn.commit()
+    conn.close()
+    sql = ("SELECT sample, v FROM t "
+           "WHERE (:region IS NULL OR region = :region) ORDER BY sample")
+    # Bound value narrows...
+    hdr, rows = SqlSource("sqlite:///" + path, sql, {"region": "EMEA"}).read()
+    assert [r[0] for r in rows] == ["s1", "s3"]
+    # ...and NULL widens (the "All" case).
+    hdr, rows = SqlSource("sqlite:///" + path, sql, {"region": None}).read()
+    assert [r[0] for r in rows] == ["s1", "s2", "s3"]
+
+
+def _byo_client(tmp_path, db_path):
+    from fastapi.testclient import TestClient
+    from cx_connectors.web.byo_app import create_byo_app
+    from cx_connectors.store import Store, generate_key
+    store = Store(str(tmp_path / "app.db"), generate_key())
+    store.create_user("alice", "secret1")
+    store.save_source(
+        "alice", "sales", "sqlite:///" + db_path,
+        "SELECT sample, v FROM t WHERE (:region IS NULL OR region = :region) ORDER BY sample",
+    )
+    app = create_byo_app(store=store, session_secret="test",
+                         encryption_key=generate_key(), serve_static=False)
+    client = TestClient(app)
+    r = client.post("/auth/login", json={"username": "alice", "password": "secret1"})
+    assert r.status_code == 200, r.text
+    return client
+
+
+def test_data_endpoint_forwards_declared_params_as_binds(tmp_path):
+    db = str(tmp_path / "d.db")
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE t (sample TEXT, v INT, region TEXT)")
+    conn.executemany("INSERT INTO t VALUES (?,?,?)",
+                     [("s1", 10, "EMEA"), ("s2", 20, "APAC")])
+    conn.commit()
+    conn.close()
+    client = _byo_client(tmp_path, db)
+
+    # No param -> widened (NULL branch) -> both samples.
+    full = client.get("/api/data", params={"source": "sales"}).json()
+    assert full["y"]["smps"] == ["s1", "s2"]
+
+    # Declared param -> bound -> narrowed.
+    emea = client.get("/api/data", params={"source": "sales", "region": "EMEA"}).json()
+    assert emea["y"]["smps"] == ["s1"]
+
+    # An unknown/injected key is ignored (query is unchanged, still narrowed by region).
+    inj = client.get("/api/data", params={"source": "sales", "region": "EMEA",
+                                          "v": "0 OR 1=1"}).json()
+    assert inj["y"]["smps"] == ["s1"]

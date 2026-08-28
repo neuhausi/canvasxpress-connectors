@@ -26,6 +26,38 @@ def assert_read_only(sql: str) -> None:
         raise ReadOnlyViolation("Only a single SELECT statement is allowed")
 
 
+# Fallback matcher for a `:name` bind parameter — a colon NOT preceded by another
+# colon (so Postgres `::type` casts are skipped) followed by an identifier.
+_BIND_RE = re.compile(r"(?<!:):([A-Za-z_]\w*)")
+
+
+def bind_param_names(sql: str) -> List[str]:
+    """The names of the ``:name`` bind parameters a SELECT declares.
+
+    Used to forward *only* the request parameters a query actually asks for
+    (as bound parameters — never string-interpolated), so an unrelated or
+    injected query key is never passed to the database. Prefers SQLAlchemy's own
+    parser (which correctly ignores ``::casts`` and escaped colons); falls back
+    to a regex when SQLAlchemy is unavailable.
+
+    :param sql: The SELECT statement.
+    :returns: Distinct bind-parameter names, in first-seen order.
+    """
+    try:
+        from sqlalchemy import text
+
+        names = list(text(sql)._bindparams.keys())
+    except Exception:
+        names = _BIND_RE.findall(sql)
+    seen = set()
+    ordered: List[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
 class SqlSource:
     """A read-only SELECT against a SQLAlchemy connection URL."""
 

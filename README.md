@@ -106,10 +106,38 @@ Connection strings are SQLAlchemy URLs; add the driver and go:
 - Postgres: `pip install "psycopg[binary]"` → `postgresql+psycopg://user:pw@host/db`
 - MySQL: `pip install PyMySQL` → `mysql+pymysql://user:pw@host/db`
 
+## Parameterized queries (live-data controls)
+
+A source's SQL can declare `:name` bind parameters, and `GET /api/data?source=…&name=…`
+forwards matching request params into them — **only** the params the query declares,
+always as **bound** parameters (never string-interpolated), so the browser can supply
+values but never alter the query shape. An unknown/extra request key is ignored; a
+declared param absent from the request is bound as `NULL`, so the `(:name IS NULL OR …)`
+idiom lets a control "widen" back to everything.
+
+```python
+store.save_source(
+    "alice", "sales",
+    "sqlite:///file:/srv/data/sales.sqlite?mode=ro&uri=true",
+    'SELECT sample, revenue FROM sales '
+    'WHERE (:region IS NULL OR region = :region) '
+    '  AND (:q IS NULL OR product LIKE :q) '
+    'ORDER BY sample',
+)
+```
+
+Then `/api/data?source=sales&region=EMEA` binds `region="EMEA"`, `q=NULL`. This is what a
+[canvasxpress-dashboards](https://github.com/neuhausi/canvasxpress-dashboards) `mode:"param"`
+control drives: a source `"query": { "region": "$region", "q": "$q" }` maps the dashboard
+parameters onto these bind names. For a `LIKE` search, wrap the value with `%` in SQL —
+`'%' || :q || '%'` — rather than in the browser.
+
 ## Security notes
 
 - Connection strings / tokens are **Fernet-encrypted at rest**; passwords are PBKDF2-hashed.
 - `SqlSource` enforces a single read-only `SELECT`; still give the DB user least-privilege read access.
+- **Query params are bound, never interpolated**, and only the `:name` binds the SQL declares
+  are forwarded — an injected `?foo=…` key never reaches the database.
 - For production: HTTPS + `https_only=True` cookies, rate-limit `/auth/login`, secrets from a
   manager (not `.env`), and pool engines per source.
 

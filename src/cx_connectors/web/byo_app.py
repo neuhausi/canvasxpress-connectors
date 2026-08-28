@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..reshape import rows_to_cx
-from ..sources.sql import ReadOnlyViolation, SqlSource
+from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
 from ..store import Store
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -123,7 +123,16 @@ def create_byo_app(
         if not record:
             raise HTTPException(status_code=404, detail="No such source for this user")
         try:
-            header, rows = SqlSource(record["conn_url"], record["sql"]).read()
+            sql = record["sql"]
+            # Forward request query params to the SQL, but ONLY the ones the query
+            # explicitly declares as `:name` bind parameters — and always as bound
+            # parameters, never string-interpolated. A declared param absent from
+            # the request is passed as NULL so a query can widen with the
+            # `(:name IS NULL OR col = :name)` idiom; any extra/unknown request key
+            # is ignored. This keeps the browser unable to alter the query shape.
+            declared = bind_param_names(sql)
+            params = {name: request.query_params.get(name) for name in declared}
+            header, rows = SqlSource(record["conn_url"], sql, params).read()
             return JSONResponse(rows_to_cx(header, rows))
         except ReadOnlyViolation as exc:
             raise HTTPException(status_code=400, detail=str(exc))

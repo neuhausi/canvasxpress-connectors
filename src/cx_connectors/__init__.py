@@ -16,5 +16,5 @@ matching extra (``pip install "canvasxpress-connectors[sql]"`` etc.).
 
 from .reshape import rows_to_cx
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["rows_to_cx", "__version__"]
