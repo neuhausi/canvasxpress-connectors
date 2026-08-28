@@ -19,7 +19,8 @@ import subprocess
 import urllib.request
 from typing import Iterable, List, Optional, Sequence, Tuple
 
-_CREATE_TABLE_RE = re.compile(r"CREATE\s+TABLE\s+\[?(\w+)\]?\s*\((.*?)\)\s*;", re.IGNORECASE | re.DOTALL)
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+\[?(\w+)\]?\s*\((.*?)\)\s*;", re.IGNORECASE | re.DOTALL)
 
 
 def download(url: str, dest: str, headers: Optional[dict] = None) -> str:
@@ -63,7 +64,8 @@ def table_columns(schema_sql: str) -> dict:
         for line in body.split(","):
             line = line.strip()
             m = re.match(r"\[?(\w+)\]?", line)
-            if m and line and not line.upper().startswith(("PRIMARY", "FOREIGN", "UNIQUE", "CHECK")):
+            _constraint = line.upper().startswith(("PRIMARY", "FOREIGN", "UNIQUE", "CHECK"))
+            if m and line and not _constraint:
                 cols.append(m.group(1))
         out[name] = cols
     return out

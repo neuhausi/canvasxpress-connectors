@@ -79,6 +79,7 @@ def test_store_roundtrips_packed_kind_and_config(tmp_path):
 
 def test_data_endpoint_serves_packed_source(tmp_path):
     from fastapi.testclient import TestClient
+
     from cx_connectors.web.byo_app import create_byo_app
 
     db = str(tmp_path / "ccle.sqlite")

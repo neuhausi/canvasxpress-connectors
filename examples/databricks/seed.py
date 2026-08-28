@@ -15,9 +15,8 @@ write-capable one (or the Databricks UI) just for this one-time seed.
 
 import os
 
-from sqlalchemy import create_engine, text
-
 from app import conn_url  # reuse the same URL builder
+from sqlalchemy import create_engine, text
 
 ROWS = [
     ("Sample1", 11, 13, 14, 15, "A", "X"),

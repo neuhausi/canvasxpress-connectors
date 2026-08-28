@@ -24,8 +24,9 @@ def test_wp_build(tmp_path):
                   gmt_files=[str(gmt)], gene_info=str(gene_info), names_dmp=str(names),
                   gpml_map={"WP179": "Hs_Cell_Cycle_WP179_1.gpml"})
     conn = sqlite3.connect(db)
-    assert conn.execute("SELECT wpId,name,version,taxName,url FROM pathway").fetchone() == \
-        ("WP179", "Cell Cycle", "20220310", "Homo sapiens", "/assets/gpml/Hs_Cell_Cycle_WP179_1.gpml")
+    assert conn.execute("SELECT wpId,name,version,taxName,url FROM pathway").fetchone() == (
+        "WP179", "Cell Cycle", "20220310", "Homo sapiens",
+        "/assets/gpml/Hs_Cell_Cycle_WP179_1.gpml")
     assert sorted(conn.execute("SELECT geneId,wpId FROM members").fetchall()) == \
         [(3845, "WP179"), (7157, "WP179")]
     genes = dict(conn.execute("SELECT geneId,symbol FROM gene").fetchall())

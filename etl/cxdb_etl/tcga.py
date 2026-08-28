@@ -279,7 +279,8 @@ _HUB_TOIL = "https://toil-xena-hub.s3.us-east-1.amazonaws.com/download/"
 _HUB_PAN = "https://tcga-pancan-atlas-hub.s3.us-east-1.amazonaws.com/download/"
 URLS = {
     "cnv": _HUB_TCGA + "TCGA.PANCAN.sampleMap%2FGistic2_CopyNumber_Gistic2_all_data_by_genes.gz",
-    "cnvt": _HUB_TCGA + "TCGA.PANCAN.sampleMap%2FGistic2_CopyNumber_Gistic2_all_thresholded.by_genes.gz",
+    "cnvt": _HUB_TCGA
+    + "TCGA.PANCAN.sampleMap%2FGistic2_CopyNumber_Gistic2_all_thresholded.by_genes.gz",
     "rna": _HUB_TOIL + "tcga_RSEM_gene_tpm.gz",
     "probemap": _HUB_TOIL + "probeMap%2Fgencode.v23.annotation.gene.probemap",
     "clinical": _HUB_PAN + "Survival_SupplementalTable_S1_20171025_xena_sp",
@@ -337,13 +338,14 @@ def create_genes(probemap: str, probemap2: str, out_gene: str) -> None:
     with open(probemap2, encoding="utf-8") as fin:
         next(fin, None)
         for line in fin:
-            l = line.rstrip("\n").split("\t")
-            if len(l) < 11:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 11:
                 continue
-            gene, chrom, start, end, strand, n = l[1], l[2], l[3], l[4], l[5], l[8]
+            gene, chrom, start, end, strand, n = (
+                cols[1], cols[2], cols[3], cols[4], cols[5], cols[8])
             # Perl: @l=col9, @o=col10; o[i]+=start; l[i]+=o[i]; exonStarts=o, exonEnds=l
-            l_raw = [x for x in l[9].split(",") if x != ""]
-            o_raw = [x for x in l[10].split(",") if x != ""]
+            l_raw = [x for x in cols[9].split(",") if x != ""]
+            o_raw = [x for x in cols[10].split(",") if x != ""]
             try:
                 s0 = int(start)
                 o = [int(o_raw[i]) + s0 for i in range(len(o_raw))]
@@ -355,13 +357,13 @@ def create_genes(probemap: str, probemap2: str, out_gene: str) -> None:
     with open(probemap, encoding="utf-8") as fin, open(out_gene, "w", encoding="utf-8") as fout:
         next(fin, None)
         for line in fin:
-            l = line.rstrip("\n").split("\t")
-            if len(l) < 5:
+            cols = line.rstrip("\n").split("\t")
+            if len(cols) < 5:
                 continue
-            if l[1] in coords:
-                fout.write("%s\t%s\t%s\n" % (l[0], l[1], "\t".join(coords[l[1]])))
+            if cols[1] in coords:
+                fout.write("%s\t%s\t%s\n" % (cols[0], cols[1], "\t".join(coords[cols[1]])))
             else:
-                fout.write("%s\t1\t%s\t%s\n" % ("\t".join(l), l[3], l[4]))
+                fout.write("%s\t1\t%s\t%s\n" % ("\t".join(cols), cols[3], cols[4]))
 
 
 def create_mutations(mc3_path: str, sample_txt: str, out_mutation: str) -> None:

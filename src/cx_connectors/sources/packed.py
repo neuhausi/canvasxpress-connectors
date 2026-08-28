@@ -120,7 +120,8 @@ class PackedMatrixSource:
                         self.template_col, self.json_table, self.template_key_col)
                     trow = conn.execute(text(tsql), {"k": self.template_key}).fetchone()
                 if not trow:
-                    raise ValueError("no template (%r) in %s" % (self.template_key, self.json_table))
+                    raise ValueError(
+                        "no template (%r) in %s" % (self.template_key, self.json_table))
                 obj = json.loads(trow[0])
                 y = obj.setdefault("data", {}).setdefault("y", {})
                 y.setdefault("vars", [])

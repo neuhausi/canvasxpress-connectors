@@ -3,6 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from cxdb_etl import ccle  # noqa: E402
+
 from cx_connectors.sources.packed import PackedMatrixSource  # noqa: E402
 
 

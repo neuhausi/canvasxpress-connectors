@@ -3,6 +3,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from cxdb_etl import gtex  # noqa: E402
+
 from cx_connectors.sources.packed import PackedMatrixSource  # noqa: E402
 
 GTF = """\
@@ -16,7 +17,9 @@ chr17\tX\texon\t110\t150\t.\t-\t.\tgene_id "ENSG1.1"; gene_name "TP53"; exon_num
 
 def _attr_row(sid, tissue):
     f = [""] * 17
-    f[0] = sid; f[6] = tissue; f[16] = "RNASEQ"
+    f[0] = sid
+    f[6] = tissue
+    f[16] = "RNASEQ"
     return "\t".join(f)
 
 

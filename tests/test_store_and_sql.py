@@ -88,8 +88,9 @@ def test_sql_source_binds_params_end_to_end(tmp_path):
 
 def _byo_client(tmp_path, db_path):
     from fastapi.testclient import TestClient
-    from cx_connectors.web.byo_app import create_byo_app
+
     from cx_connectors.store import Store, generate_key
+    from cx_connectors.web.byo_app import create_byo_app
     store = Store(str(tmp_path / "app.db"), generate_key())
     store.create_user("alice", "secret1")
     store.save_source(

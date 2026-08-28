@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from .common import build_sqlite, download, gunzip
 

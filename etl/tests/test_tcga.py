@@ -3,14 +3,20 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from cxdb_etl import tcga  # noqa: E402
+
 from cx_connectors.sources.packed import PackedMatrixSource  # noqa: E402
 
 
 def _sample_row(sid, cancer, abbr, age, gender, race, idx):
     # id + 36 fields (35 clinical + idx). Fill positions 0..6, pad, idx last.
     m = [""] * 36
-    m[0] = "Tumor"; m[1] = cancer; m[2] = "pat"; m[3] = abbr
-    m[4] = str(age); m[5] = gender; m[6] = race
+    m[0] = "Tumor"
+    m[1] = cancer
+    m[2] = "pat"
+    m[3] = abbr
+    m[4] = str(age)
+    m[5] = gender
+    m[6] = race
     m[35] = str(idx)
     return "\t".join([sid] + m) + "\n"
 
@@ -59,8 +65,9 @@ def test_tcga_create_samples_and_mutations(tmp_path):
         "sample\tpatient\tcancer_type_abbreviation\tage\n"
         "S1\tp1\tBRCA\t50\nS2\tp2\tLUAD\t61\n")
     sample_txt = tmp_path / "sample.txt"
-    tcga.create_samples(str(tmp_path / "disease.tsv"), str(tmp_path / "clinical.tsv"), str(sample_txt))
-    rows = [l.rstrip("\n").split("\t") for l in open(sample_txt)]
+    tcga.create_samples(
+        str(tmp_path / "disease.tsv"), str(tmp_path / "clinical.tsv"), str(sample_txt))
+    rows = [row.rstrip("\n").split("\t") for row in open(sample_txt)]
     # id + [sample_type, primary_disease, patient, cancer_abbr, age] + idx = 7 cols
     assert rows[0] == ["S1", "Tumor", "Breast Cancer", "p1", "BRCA", "50", "0"]
     assert rows[1][0] == "S2" and rows[1][-1] == "1"
@@ -69,6 +76,6 @@ def test_tcga_create_samples_and_mutations(tmp_path):
         "sample\tchr\tstart\n" "S1\tchr17\t100\nSX\tchr1\t5\n")
     mut = tmp_path / "mut.txt"
     tcga.create_mutations(str(tmp_path / "mc3.xena"), str(sample_txt), str(mut))
-    mrows = [l.rstrip("\n").split("\t") for l in open(mut)]
+    mrows = [row.rstrip("\n").split("\t") for row in open(mut)]
     assert mrows[0] == ["S1", "chr17", "100", "0"]     # idx from sample.txt order
     assert mrows[1] == ["SX", "chr1", "5", ""]         # unknown sample -> blank idx
