@@ -2,7 +2,9 @@
 
 from .base import DataSource, to_cx
 
-__all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource", "PackedMatrixSource"]
+__all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource",
+           "GoogleAnalyticsSource", "SalesforceSource", "ServiceNowSource",
+           "PackedMatrixSource"]
 
 
 def __getattr__(name):
@@ -17,4 +19,13 @@ def __getattr__(name):
     if name == "GoogleSheetsSource":
         from .google_sheets import GoogleSheetsSource
         return GoogleSheetsSource
+    if name == "GoogleAnalyticsSource":
+        from .google_analytics import GoogleAnalyticsSource
+        return GoogleAnalyticsSource
+    if name == "SalesforceSource":
+        from .salesforce import SalesforceSource
+        return SalesforceSource
+    if name == "ServiceNowSource":
+        from .servicenow import ServiceNowSource
+        return ServiceNowSource
     raise AttributeError(name)

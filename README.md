@@ -22,6 +22,9 @@ Browser (CanvasXpress)  ──►  your app (this package)  ──►  authentic
 pip install canvasxpress-connectors            # core only (needs just cryptography)
 pip install "canvasxpress-connectors[sql]"     # + SQLAlchemy databases
 pip install "canvasxpress-connectors[sheets]"  # + Google Sheets
+pip install "canvasxpress-connectors[analytics]" # + Google Analytics 4 (GA4)
+pip install "canvasxpress-connectors[salesforce]" # + Salesforce (SOQL)
+pip install "canvasxpress-connectors[servicenow]" # + ServiceNow (Table API)
 pip install "canvasxpress-connectors[all]"     # everything incl. the web app
 ```
 
@@ -47,9 +50,9 @@ Return `data` as JSON from an endpoint; the page does `new CanvasXpress("cx", da
 | Layer | Module | Job |
 |-------|--------|-----|
 | Reshape | `cx_connectors.reshape` | rows → CanvasXpress `{y, x}` (core, no heavy deps) |
-| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource` |
+| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource` |
 | Store | `cx_connectors.store` | users (PBKDF2) + per-user **encrypted** connection strings |
-| Web | `cx_connectors.web` | `create_byo_app()` (database, login) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
+| Web | `cx_connectors.web` | `create_byo_app()` (databases + Salesforce/ServiceNow, login) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
 
 Adding a backend (BigQuery, a REST API, CSV) = one class with a `read()` returning
 `(header, rows)`. Nothing else changes.
@@ -101,10 +104,188 @@ own handlers, and bring your own auth.
 
 ## Databases beyond SQLite
 
-Connection strings are SQLAlchemy URLs; add the driver and go:
+`SqlSource` is backend-agnostic — it has **no database-specific code**. Any database with a
+SQLAlchemy dialect works by changing only the connection URL; add the driver and go. Each
+database has a convenience extra (`pip install "canvasxpress-connectors[<name>]"`) that pulls
+SQLAlchemy plus the right DBAPI driver:
 
-- Postgres: `pip install "psycopg[binary]"` → `postgresql+psycopg://user:pw@host/db`
-- MySQL: `pip install PyMySQL` → `mysql+pymysql://user:pw@host/db`
+| Database | Extra | Driver | Connection URL |
+|----------|-------|--------|----------------|
+| PostgreSQL | `[postgres]` | `psycopg` | `postgresql+psycopg://user:pw@host/db` |
+| MySQL | `[mysql]` | `PyMySQL` | `mysql+pymysql://user:pw@host/db` |
+| MS SQL Server | `[mssql]` | `pyodbc` | `mssql+pyodbc://user:pw@host/db?driver=ODBC+Driver+18+for+SQL+Server` |
+| Oracle | `[oracle]` | `oracledb` | `oracle+oracledb://user:pw@host:1521/?service_name=ORCLPDB1` |
+| Teradata | `[teradata]` | `teradatasqlalchemy` | `teradatasql://user:pw@host` |
+| Snowflake | `[snowflake]` | `snowflake-sqlalchemy` | `snowflake://user:pw@account/db/schema?warehouse=wh&role=r` |
+| Google BigQuery | `[bigquery]` | `sqlalchemy-bigquery` | `bigquery://<project>/<dataset>` (auth out-of-band, see below) |
+| Amazon Redshift | `[redshift]` | `redshift-connector` | `redshift+redshift_connector://user:pw@host:5439/db` |
+| Azure Synapse | `[mssql]` | `pyodbc` | `mssql+pyodbc://user:pw@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server` |
+| Databricks | `[databricks]` | `databricks-sql-connector` | `databricks://token:<PAT>@<host>?http_path=/sql/1.0/warehouses/<id>&catalog=<c>&schema=<s>` |
+
+The read-only `SELECT` guard and `:name` bind-parameter forwarding work identically across all
+of them, since they operate on the SQL string, not the backend. A few backend notes:
+
+- **MS SQL Server / Azure Synapse** also need Microsoft's native **ODBC Driver 18** installed on
+  the host (the `pyodbc` package is only the Python binding). Synapse is SQL Server-wire-compatible,
+  so it reuses the `[mssql]` extra and the `mssql+pyodbc://` URL — point it at the dedicated SQL
+  pool endpoint. `pymssql` is an alternative that bundles its own driver:
+  `pip install pymssql` → `mssql+pymssql://user:pw@host/db`.
+- **Teradata**'s dialect (`teradatasqlalchemy`) is maintained by Teradata; pin/verify it against
+  your SQLAlchemy version. A quick connection test before relying on it is worthwhile.
+- **Google BigQuery** does not authenticate through the URL — it uses a service-account JSON or
+  Application Default Credentials from the environment (e.g. `GOOGLE_APPLICATION_CREDENTIALS=/path/sa.json`),
+  so the URL is just `bigquery://<project>` or `bigquery://<project>/<dataset>`. Give the service
+  account read-only (`roles/bigquery.dataViewer` + `bigquery.jobUser`) access.
+- **Amazon Redshift** is Postgres-wire-compatible: `redshift+redshift_connector://` uses Amazon's
+  driver (recommended, supports IAM auth), but `postgresql+psycopg://…:5439/db` also works if you
+  prefer the plain Postgres driver.
+
+### Databricks
+
+Databricks SQL Warehouses (and clusters) speak SQL through the
+[`databricks-sql-connector`](https://pypi.org/project/databricks-sql-connector/) SQLAlchemy
+dialect, so `SqlSource` reaches them with **no new code** — only the connection URL changes:
+
+```python
+import os
+from cx_connectors.sources import SqlSource
+from cx_connectors.sources.base import to_cx
+
+CONN_URL = (
+    "databricks://token:" + os.environ["DATABRICKS_TOKEN"] + "@"
+    + os.environ["DATABRICKS_HOST"]                       # dbc-xxxx.cloud.databricks.com
+    + "?http_path=" + os.environ["DATABRICKS_HTTP_PATH"]  # /sql/1.0/warehouses/<id>
+    + "&catalog=main&schema=default"
+)
+data = to_cx(SqlSource(
+    CONN_URL,
+    "SELECT sample, geneA, geneB, category FROM expression "
+    "WHERE (:cohort IS NULL OR cohort = :cohort) ORDER BY sample",
+))
+```
+
+The read-only `SELECT` guard, `:name` bind-parameter forwarding, and everything downstream
+work unchanged. Use a Databricks **personal access token** (or an OAuth M2M token) scoped to a
+least-privilege user with read-only access to the warehouse. A runnable end-to-end example is
+in [`examples/databricks/`](examples/databricks/).
+
+## Non-SQL sources (REST / SaaS APIs)
+
+Not every source is a database. SaaS APIs (Google Analytics, Salesforce, ServiceNow, …) have
+**no SQLAlchemy dialect**, so `SqlSource` can't reach them — but the `DataSource` seam is exactly
+for this: a source's only job is to return `(header, rows)`, so each API is one small class and
+nothing downstream changes. Google Analytics 4, Salesforce, and ServiceNow ship built-in.
+
+### Google Analytics 4 (GA4)
+
+`GoogleAnalyticsSource` runs a GA4 **Data API** `runReport` (dimensions + metrics over a date
+range) and reshapes it: the **first dimension** becomes the sample axis, **metrics** become
+numeric variables, and any **further dimensions** become per-sample annotations.
+
+```bash
+pip install "canvasxpress-connectors[analytics]"
+```
+
+```python
+from google.oauth2 import service_account
+from cx_connectors.sources import GoogleAnalyticsSource
+from cx_connectors.sources.base import to_cx
+
+creds = service_account.Credentials.from_service_account_file(
+    "sa.json", scopes=["https://www.googleapis.com/auth/analytics.readonly"])
+
+data = to_cx(GoogleAnalyticsSource(
+    credentials=creds,
+    property_id="123456789",                 # GA4 property id (digits only)
+    dimensions=["date", "sessionDefaultChannelGroup"],
+    metrics=["activeUsers", "sessions"],
+    start_date="28daysAgo", end_date="today",
+))
+# y.smps = dates · y.vars = [activeUsers, sessions] · x.sessionDefaultChannelGroup = channel per row
+```
+
+Auth is **out-of-band**, like BigQuery: a service-account JSON (share the GA4 property with the
+service account's email, Viewer) or user OAuth — the credential never touches the URL or the
+browser. GA4 reports are inherently read-only, so there is no SELECT guard to mirror; the caller
+picks the dimensions/metrics server-side.
+
+### Salesforce (SOQL)
+
+`SalesforceSource` runs a **SOQL** query and reshapes the records: the first selected field is
+the sample axis, numeric fields become variables, text fields become annotations. Column order
+follows the `SELECT` list, and relationship fields (`Account.Name`) are read from the nested
+record. A read-only guard rejects anything that isn't a `SELECT` (mirroring `SqlSource`).
+
+```bash
+pip install "canvasxpress-connectors[salesforce]"
+```
+
+```python
+from cx_connectors.sources import SalesforceSource
+from cx_connectors.sources.base import to_cx
+
+data = to_cx(SalesforceSource(
+    "SELECT Name, Amount, StageName, Account.Name FROM Opportunity WHERE IsClosed = true",
+    username="integration@acme.com", password="…", security_token="…",
+    domain="login",                      # "test" for a sandbox
+))
+# or session-based auth: SalesforceSource(soql, session_id="…", instance_url="https://…")
+```
+
+Use a least-privilege Salesforce **integration user** with read-only object/field permissions.
+`query_all` follows the API's paging cursors, so large result sets come back complete.
+
+### ServiceNow (Table API)
+
+`ServiceNowSource` reads a table through the REST **Table API** (`GET /api/now/table/<table>`)
+with an encoded `sysparm_query`. It only ever issues `GET`, so it is read-only by construction.
+Reference/choice fields (returned as `{display_value, value}`) are flattened to their display
+value.
+
+```bash
+pip install "canvasxpress-connectors[servicenow]"
+```
+
+```python
+from cx_connectors.sources import ServiceNowSource
+from cx_connectors.sources.base import to_cx
+
+data = to_cx(ServiceNowSource(
+    instance="acme",                     # acme.service-now.com
+    table="incident",
+    query="active=true^priority=1",      # encoded ServiceNow query
+    fields=["number", "priority", "category"],   # also fixes column order
+    limit=1000,
+    username="integration", password="…",        # basic auth; use an integration user
+))
+```
+
+Give the ServiceNow user a least-privilege read-only role (ACLs still apply per row/field).
+
+**OAuth 2.0** instead of basic auth: mint a short-lived bearer token and pass it as `oauth_token`.
+Store the long-lived refresh token / password (encrypted), not the access token — mint one per read.
+
+```python
+from cx_connectors.sources.servicenow import servicenow_oauth_token
+
+token = servicenow_oauth_token(
+    "acme", client_id="…", client_secret="…",
+    username="integration", password="…",   # password grant
+    # or: refresh_token="…"                  # refresh_token grant
+)
+data = to_cx(ServiceNowSource(instance="acme", table="incident",
+                              fields=["number", "priority"], oauth_token=token))
+```
+
+### Registering SaaS sources through the web app
+
+The BYO web app (`create_byo_app` / the `/connectors` demo) registers these too, not just
+databases. The **Type** selector on the register-source form switches between *SQL database*,
+*Salesforce (SOQL)*, and *ServiceNow (Table API)*; ServiceNow offers **Basic** or **OAuth 2.0**
+auth. Credentials are stored **encrypted** exactly like a connection string — for ServiceNow
+OAuth, the refresh/password credentials are stored and a bearer token is minted per request. The
+`POST /api/sources` body carries `kind` (`"salesforce"`/`"servicenow"`) plus an `auth` object;
+`GET /api/data?source=<name>` then runs the SOQL query / Table API read and reshapes it.
 
 ## Parameterized queries (live-data controls)
 

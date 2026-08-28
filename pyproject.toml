@@ -20,7 +20,25 @@ dependencies = [
 [project.optional-dependencies]
 # Install only what your sources/serving need.
 sql = ["SQLAlchemy>=2.0"]
+# Per-backend convenience extras: SQLAlchemy + the DBAPI driver for that database.
+# SqlSource is backend-agnostic, so each is just a driver swap — no connector code changes.
+postgres = ["SQLAlchemy>=2.0", "psycopg[binary]>=3.1"]
+mysql = ["SQLAlchemy>=2.0", "PyMySQL>=1.1"]
+mssql = ["SQLAlchemy>=2.0", "pyodbc>=5.1"]              # needs the MS ODBC Driver 18 installed too
+oracle = ["SQLAlchemy>=2.0", "oracledb>=2.0"]
+teradata = ["SQLAlchemy>=2.0", "teradatasqlalchemy>=20.0"]
+# Cloud warehouses — each is just a SQLAlchemy dialect + driver; no connector code changes.
+snowflake = ["SQLAlchemy>=2.0", "snowflake-sqlalchemy>=1.6"]
+bigquery = ["SQLAlchemy>=2.0", "sqlalchemy-bigquery>=1.11"]
+redshift = ["SQLAlchemy>=2.0", "sqlalchemy-redshift>=0.8", "redshift-connector>=2.1"]
+# Azure Synapse is SQL Server-wire-compatible — it reuses the [mssql] extra (mssql+pyodbc).
+# Databricks reuses SqlSource via its SQLAlchemy dialect (databricks+connector://).
+databricks = ["SQLAlchemy>=2.0", "databricks-sql-connector[sqlalchemy]>=3.0"]
 sheets = ["google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.120"]
+# SaaS/REST sources — not SQL; each has its own dedicated DataSource class.
+analytics = ["google-auth>=2.28", "google-analytics-data>=0.18"]  # Google Analytics 4
+salesforce = ["simple-salesforce>=1.12"]                           # Salesforce SOQL
+servicenow = ["requests>=2.31"]                                    # ServiceNow Table API
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0"]
 all = [
     "SQLAlchemy>=2.0",

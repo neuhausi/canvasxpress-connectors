@@ -45,12 +45,56 @@
     </div>
 
     <fieldset>
-      <legend>Register a database (connection string stays server-side, encrypted)</legend>
+      <legend>Register a source (credentials stay server-side, encrypted)</legend>
       <div class="row"><label>Name</label><input id="sName" type="text" placeholder="my-genes"></div>
-      <div class="row"><label>Conn URL</label><input id="sConn" type="text"
-           placeholder="sqlite:///path.db  ·  postgresql+psycopg://user:pw@host/db"></div>
-      <div class="row"><label>SELECT</label><textarea id="sSql"
-           placeholder="SELECT sample, GeneA, GeneB, category FROM expression"></textarea></div>
+      <div class="row"><label>Type</label>
+        <select id="sKind">
+          <option value="sql">SQL database</option>
+          <option value="salesforce">Salesforce (SOQL)</option>
+          <option value="servicenow">ServiceNow (Table API)</option>
+        </select>
+      </div>
+
+      <!-- SQL database -->
+      <div id="grpSql">
+        <div class="row"><label>Conn URL</label><input id="sConn" type="text"
+             placeholder="sqlite:///path.db  ·  postgresql+psycopg://user:pw@host/db"></div>
+        <div class="row"><label>SELECT</label><textarea id="sSql"
+             placeholder="SELECT sample, GeneA, GeneB, category FROM expression"></textarea></div>
+      </div>
+
+      <!-- Salesforce -->
+      <div id="grpSf" class="hidden">
+        <div class="row"><label>SOQL</label><textarea id="sfSoql"
+             placeholder="SELECT Name, Amount, StageName FROM Opportunity"></textarea></div>
+        <div class="row"><label>Username</label><input id="sfUser" type="text" autocomplete="off"></div>
+        <div class="row"><label>Password</label><input id="sfPass" type="password" autocomplete="off"></div>
+        <div class="row"><label>Sec. token</label><input id="sfToken" type="password" autocomplete="off"></div>
+        <div class="row"><label>Domain</label>
+          <select id="sfDomain"><option value="login">login (prod)</option><option value="test">test (sandbox)</option></select>
+        </div>
+      </div>
+
+      <!-- ServiceNow -->
+      <div id="grpSn" class="hidden">
+        <div class="row"><label>Instance</label><input id="snInst" type="text" placeholder="acme"></div>
+        <div class="row"><label>Table</label><input id="snTable" type="text" placeholder="incident"></div>
+        <div class="row"><label>Query</label><input id="snQuery" type="text" placeholder="active=true^priority=1"></div>
+        <div class="row"><label>Fields</label><input id="snFields" type="text" placeholder="number,priority,category"></div>
+        <div class="row"><label>Limit</label><input id="snLimit" type="text" placeholder="1000"></div>
+        <div class="row"><label>Auth</label>
+          <select id="snAuth"><option value="basic">Basic</option><option value="oauth">OAuth 2.0</option></select>
+        </div>
+        <div class="row"><label>Username</label><input id="snUser" type="text" autocomplete="off"></div>
+        <div class="row"><label>Password</label><input id="snPass" type="password" autocomplete="off"></div>
+        <div id="snOauth" class="hidden">
+          <div class="row"><label>Client ID</label><input id="snCid" type="text" autocomplete="off"></div>
+          <div class="row"><label>Client secret</label><input id="snCsec" type="password" autocomplete="off"></div>
+          <div class="row"><label>Refresh tok.</label><input id="snRefresh" type="password" autocomplete="off"
+               placeholder="(optional; else password grant)"></div>
+        </div>
+      </div>
+
       <div class="row"><button id="addSource">Save source</button></div>
     </fieldset>
 
@@ -121,10 +165,45 @@
       jpost(api("/auth/logout")).then(refresh).then(function () { setStatus("Logged out."); });
     });
 
+    // Show only the fields for the selected source type.
+    function syncKind() {
+      var kind = document.getElementById("sKind").value;
+      document.getElementById("grpSql").classList.toggle("hidden", kind !== "sql");
+      document.getElementById("grpSf").classList.toggle("hidden", kind !== "salesforce");
+      document.getElementById("grpSn").classList.toggle("hidden", kind !== "servicenow");
+    }
+    function syncSnAuth() {
+      document.getElementById("snOauth").classList.toggle(
+        "hidden", document.getElementById("snAuth").value !== "oauth");
+    }
+    document.getElementById("sKind").addEventListener("change", syncKind);
+    document.getElementById("snAuth").addEventListener("change", syncSnAuth);
+    syncKind(); syncSnAuth();
+
+    function val(id) { return document.getElementById(id).value.trim(); }
+
+    // Assemble the register-source payload for the selected type.
+    function buildSourceBody() {
+      var kind = document.getElementById("sKind").value;
+      if (kind === "salesforce") {
+        return { name: val("sName"), kind: kind, soql: val("sfSoql"), auth: {
+          username: val("sfUser"), password: val("sfPass"),
+          security_token: val("sfToken"), domain: val("sfDomain") } };
+      }
+      if (kind === "servicenow") {
+        var auth = val("snAuth") === "oauth"
+          ? { type: "oauth", client_id: val("snCid"), client_secret: val("snCsec"),
+              username: val("snUser"), password: val("snPass"), refresh_token: val("snRefresh") }
+          : { type: "basic", username: val("snUser"), password: val("snPass") };
+        return { name: val("sName"), kind: kind, instance: val("snInst"), table: val("snTable"),
+          query: val("snQuery"), fields: val("snFields"), limit: val("snLimit"), auth: auth };
+      }
+      return { name: val("sName"), kind: "sql", conn_url: val("sConn"), sql: val("sSql") };
+    }
+
     document.getElementById("addSource").addEventListener("click", function () {
-      jpost(api("/api/sources"), {
-        name: sName.value, conn_url: sConn.value, sql: sSql.value
-      }).then(function (r) { return r.ok ? r.json() : asError(r); })
+      jpost(api("/api/sources"), buildSourceBody())
+        .then(function (r) { return r.ok ? r.json() : asError(r); })
         .then(loadSources).then(function () { setStatus("Source saved."); })
         .catch(function (e) { setStatus(e.message, true); });
     });

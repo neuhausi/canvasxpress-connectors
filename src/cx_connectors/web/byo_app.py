@@ -11,6 +11,7 @@ Requires the ``web`` and ``sql`` extras.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -21,10 +22,69 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
+from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
+from ..sources.salesforce import SalesforceSource
+from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
 from ..store import Store
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+
+def _servicenow_config_from_body(body: dict) -> dict:
+    """Normalize a ServiceNow registration body into the stored (encrypted) config.
+
+    ``fields`` accepts a list or a comma-separated string; ``auth`` is passed through as
+    ``{"type": "basic"|"oauth", ...}`` and kept in the encrypted blob with the query config.
+
+    :param body: The POST body from the register-source form.
+    :returns: The config dict to JSON-encode into ``conn_enc``.
+    :raises HTTPException: If instance or table is missing.
+    """
+    instance = (body.get("instance") or "").strip()
+    table = (body.get("table") or "").strip()
+    if not (instance and table):
+        raise HTTPException(status_code=400, detail="instance and table are required")
+    fields = body.get("fields")
+    if isinstance(fields, str):
+        fields = [f.strip() for f in fields.split(",") if f.strip()] or None
+    limit = body.get("limit")
+    return {
+        "instance": instance,
+        "table": table,
+        "query": (body.get("query") or "").strip(),
+        "fields": fields,
+        "limit": int(limit) if limit not in (None, "", 0) else None,
+        "auth": body.get("auth") or {},
+    }
+
+
+def _read_saas_source(record: dict):
+    """Build the Salesforce/ServiceNow source for a stored record and read it.
+
+    The record's ``conn_url`` holds the decrypted JSON auth/query blob. For ServiceNow with
+    OAuth, a short-lived bearer token is minted per read; the password/refresh credentials are
+    what's stored, never the access token.
+
+    :param record: A ``store.get_source`` record with ``kind`` ``"salesforce"``/``"servicenow"``.
+    :returns: ``(header, rows)`` from the source's ``read()``.
+    """
+    kind = record.get("kind")
+    if kind == "salesforce":
+        auth = json.loads(record["conn_url"]) if record["conn_url"] else {}
+        return SalesforceSource(record["sql"], **auth).read()
+
+    cfg = json.loads(record["conn_url"]) if record["conn_url"] else {}
+    auth = cfg.pop("auth", {}) or {}
+    if (auth.get("type") or "basic") == "oauth":
+        token = servicenow_oauth_token(
+            cfg["instance"], auth["client_id"], auth["client_secret"],
+            username=auth.get("username"), password=auth.get("password"),
+            refresh_token=auth.get("refresh_token"),
+        )
+        return ServiceNowSource(oauth_token=token, **cfg).read()
+    return ServiceNowSource(username=auth.get("username"), password=auth.get("password"),
+                            **cfg).read()
 
 
 def create_byo_app(
@@ -99,10 +159,34 @@ def create_byo_app(
         user = require_user(request)
         body = await request.json()
         name = (body.get("name") or "").strip()
+        kind = (body.get("kind") or "sql").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+
+        # SaaS/REST sources (Salesforce SOQL, ServiceNow Table API) have no connection
+        # string — their auth + query are stored, encrypted, as a JSON blob in conn_enc.
+        if kind == "salesforce":
+            soql = (body.get("soql") or "").strip()
+            auth = body.get("auth") or {}
+            if not soql:
+                raise HTTPException(status_code=400, detail="soql is required")
+            try:
+                SalesforceSource(soql, client=object())  # validates read-only, no connect
+            except SoqlReadOnlyViolation as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            store.save_source(user, name, json.dumps(auth), soql, kind="salesforce")
+            return {"sources": store.list_sources(user)}
+
+        if kind == "servicenow":
+            cfg = _servicenow_config_from_body(body)
+            store.save_source(user, name, json.dumps(cfg), "", kind="servicenow")
+            return {"sources": store.list_sources(user)}
+
+        # Default: a plain SQL SELECT source.
         conn_url = (body.get("conn_url") or "").strip()
         sql = (body.get("sql") or "").strip()
-        if not (name and conn_url and sql):
-            raise HTTPException(status_code=400, detail="name, conn_url and sql are required")
+        if not (conn_url and sql):
+            raise HTTPException(status_code=400, detail="conn_url and sql are required")
         try:
             SqlSource(conn_url, sql)  # validates read-only without connecting
         except ReadOnlyViolation as exc:
@@ -143,6 +227,11 @@ def create_byo_app(
                     value_sep=cfg.get("value_sep", ";"),
                 )
                 return JSONResponse(src.read_cx())
+
+            # SaaS/REST sources: run the SOQL query / Table API read and reshape.
+            if record.get("kind") in ("salesforce", "servicenow"):
+                header, rows = _read_saas_source(record)
+                return JSONResponse(rows_to_cx(header, rows))
 
             sql = record["sql"]
             # Forward request query params to the SQL, but ONLY the ones the query
