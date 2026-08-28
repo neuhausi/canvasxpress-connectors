@@ -20,19 +20,19 @@ dir (e.g. `/home/canvasxpress/data/sqlite/`) and register a connector source.
 | `gencode` | `gencode.sqlite` | GENCODE GTF + EBI GWAS catalog |
 | `wp` | `wp.sqlite` | WikiPathways GMT/GPML + NCBI gene_info/taxonomy |
 | `ccle` | `ccle.sqlite` | CCLE (Figshare) expression/CNV/mutations + GENCODE probemap |
+| `tcga` | `tcga.sqlite` | TCGA PanCanAtlas (Xena) CNV/thresholded-CNV/expression/RPPA/mutations + clinical |
 
 **Status**
 - `gencode`, `wp` — full download→build pipelines, tested on synthetic inputs.
-- `ccle` — the **packed-matrix reshape** (`pack_matrix`), the `json`/`indices`
-  template builders, and `assemble()` are complete and tested (a mini build is read
-  back through the Phase-1 `PackedMatrixSource`). The `build()` download wrapper is a
-  stub: the CCLE sample-info / mutation **column layouts drift between Figshare
-  releases**, so wire the current URLs + confirm those column indices before a real
-  run — the reshape core is format-independent.
+- `ccle`, `tcga` — the **packed-matrix reshape** (`pack_matrix` for CCLE genes-as-columns,
+  `pack_rows` for TCGA genes-as-rows), the `json`/`indices`/survival template builders, and
+  `assemble()` are complete and tested (a mini build is read back through the Phase-1
+  `PackedMatrixSource` — for TCGA including the `1min`/`1med` annotation sets). The
+  `build()` download wrapper is a stub for both: the sample-info / mutation **column
+  layouts drift between releases**, so wire the current URLs + confirm those column
+  indices before a real run — the reshape core is format-independent.
 - `refseq` — **not ported**: its build script (genome/hapmap/gwas) was not among the
   provided Perl sources; `genomeServices.pl` is the *serve* side only.
-- `tcga` — deferred (the Perl `update` is largely commented out and the inputs are
-  large Xena dumps).
 
 ## The packed format
 
