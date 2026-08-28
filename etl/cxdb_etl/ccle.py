@@ -121,9 +121,14 @@ def build_template(samples: Dict[str, list], sorted_samples: List[str], compartm
     return {"data": {"y": y, compartment: ann}}
 
 
-def single_indices(global_pos: Dict[str, int], sample_list: List[str]) -> List[int]:
-    """Index of each of a data type's samples within the global sorted sample list."""
-    return [global_pos[s] for s in sample_list]
+def single_indices(global_pos: Dict[str, int], sample_list: List[str]) -> List[Optional[int]]:
+    """Index of each of a data type's samples within the global sorted sample list.
+
+    A matrix can carry samples absent from the (clinical-filtered) sample table, so a
+    missing sample yields ``None`` (JSON ``null``) rather than raising — matching the
+    original Perl, which pushed ``undef`` for an unknown sample.
+    """
+    return [global_pos.get(s) for s in sample_list]
 
 
 def pair_indices(list1: List[str], list2: List[str]) -> List[List[int]]:
