@@ -1,0 +1,16 @@
+{
+  "user": "alice",
+  "password": "change-me-only-needed-to-create-the-user",
+  "sources": [
+    {
+      "name": "sales",
+      "path": "/srv/cxd-data/sales.sqlite",
+      "sql": "SELECT sample, revenue, units FROM sales WHERE (:region IS NULL OR region = :region) AND (:q IS NULL OR product LIKE '%' || :q || '%') ORDER BY sample"
+    },
+    {
+      "name": "genes",
+      "url": "sqlite:///file:/srv/cxd-data/genomes.sqlite?mode=ro&uri=true",
+      "sql_file": "queries/genes.sql"
+    }
+  ]
+}

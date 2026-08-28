@@ -132,6 +132,11 @@ control drives: a source `"query": { "region": "$region", "q": "$q" }` maps the 
 parameters onto these bind names. For a `LIKE` search, wrap the value with `%` in SQL —
 `'%' || :q || '%'` — rather than in the browser.
 
+To register many sources for a deployment at once (instead of the `/connectors` UI), use
+[`examples/_tools/register_sources.py`](examples/_tools/register_sources.py) with a JSON
+config (`examples/_tools/sources.example.json`) — the DB files stay on the server; only the
+encrypted URL + SQL are stored, and it prints each source's declared bind params.
+
 ## Security notes
 
 - Connection strings / tokens are **Fernet-encrypted at rest**; passwords are PBKDF2-hashed.
