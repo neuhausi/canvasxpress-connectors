@@ -137,6 +137,34 @@ To register many sources for a deployment at once (instead of the `/connectors` 
 config (`examples/_tools/sources.example.json`) — the DB files stay on the server; only the
 encrypted URL + SQL are stored, and it prints each source's declared bind params.
 
+## Packed-matrix sources (CCLE / TCGA expression)
+
+Some reference databases store an expression / copy-number matrix in a **packed** form
+for fast single-gene retrieval — one row per gene holding a JSON array of its values
+across all samples, plus a shared `json` template table carrying the sample axis +
+annotations once. A plain `SELECT` can't reassemble that, so a **`packed`** source does:
+it loads the template, fetches the requested genes' arrays, and appends each as a
+`vars`/`data` row, yielding a CanvasXpress object for a boxplot / violin / heatmap.
+
+Register one with `kind="packed"` and a config (the gene list comes from a request param
+named by `gene_param`, comma-separated), then the source drives a gene-search dashboard
+control live:
+
+```python
+store.save_source(
+    "alice", "ccle-rna-expression",
+    "sqlite:///file:/srv/cxd-data/ccle.sqlite?mode=ro&uri=true",
+    "",                                   # no SQL for a packed source
+    kind="packed",
+    config={"table": "rnaseq", "value_col": "log2tpm", "template_key": "rna1",
+            "gene_param": "genes"},
+)
+# GET /api/data?source=ccle-rna-expression&genes=TP53,KRAS
+```
+
+Table/column identifiers come from this server-side config (validated as SQL identifiers);
+gene values are always bound parameters.
+
 ## Security notes
 
 - Connection strings / tokens are **Fernet-encrypted at rest**; passwords are PBKDF2-hashed.

@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..reshape import rows_to_cx
+from ..sources.packed import PackedMatrixSource
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
 from ..store import Store
 
@@ -123,6 +124,22 @@ def create_byo_app(
         if not record:
             raise HTTPException(status_code=404, detail="No such source for this user")
         try:
+            # A 'packed' source reassembles a column-store matrix (CCLE/TCGA
+            # expression) into a CanvasXpress object; its gene list comes from a
+            # request param named by the config (default 'genes', comma-separated).
+            if record.get("kind") == "packed":
+                cfg = record.get("config") or {}
+                gene_param = cfg.get("gene_param", "genes")
+                raw = request.query_params.get(gene_param) or ""
+                genes = [g.strip() for g in raw.split(",") if g.strip()]
+                src = PackedMatrixSource(
+                    record["conn_url"], cfg["table"], cfg["value_col"], cfg["template_key"],
+                    name_col=cfg.get("name_col", "name"),
+                    json_table=cfg.get("json_table", "json"),
+                    genes=genes, max_genes=cfg.get("max_genes", 200),
+                )
+                return JSONResponse(src.read_cx())
+
             sql = record["sql"]
             # Forward request query params to the SQL, but ONLY the ones the query
             # explicitly declares as `:name` bind parameters — and always as bound

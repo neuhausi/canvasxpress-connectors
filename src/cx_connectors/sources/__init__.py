@@ -2,7 +2,7 @@
 
 from .base import DataSource, to_cx
 
-__all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource"]
+__all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource", "PackedMatrixSource"]
 
 
 def __getattr__(name):
@@ -11,6 +11,9 @@ def __getattr__(name):
     if name == "SqlSource":
         from .sql import SqlSource
         return SqlSource
+    if name == "PackedMatrixSource":
+        from .packed import PackedMatrixSource
+        return PackedMatrixSource
     if name == "GoogleSheetsSource":
         from .google_sheets import GoogleSheetsSource
         return GoogleSheetsSource

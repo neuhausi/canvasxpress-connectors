@@ -65,6 +65,12 @@ class Store:
         cols = [r[1] for r in self._conn.execute("PRAGMA table_info(sources)")]
         if "updated_at" not in cols:
             self._conn.execute("ALTER TABLE sources ADD COLUMN updated_at TEXT")
+        # Migration: a source is a plain SQL SELECT ('sql', the default) or another
+        # kind (e.g. 'packed') whose reassembly config is stored as JSON in `config`.
+        if "kind" not in cols:
+            self._conn.execute("ALTER TABLE sources ADD COLUMN kind TEXT NOT NULL DEFAULT 'sql'")
+        if "config" not in cols:
+            self._conn.execute("ALTER TABLE sources ADD COLUMN config TEXT")
         # Backfill: pre-migration rows get "now" so every source has a date.
         import datetime as _dt
         self._conn.execute(
@@ -95,21 +101,32 @@ class Store:
         return bool(row) and verify_password(password, row[0], row[1])
 
     # ---- per-user sources ----
-    def save_source(self, username: str, name: str, conn_url: str, sql: str) -> None:
+    def save_source(self, username: str, name: str, conn_url: str, sql: str,
+                    kind: str = "sql", config: Optional[dict] = None) -> None:
+        """Store (or update) a user's data source.
+
+        :param kind: ``"sql"`` (a SELECT in ``sql``) or another source kind (e.g.
+            ``"packed"``) whose reassembly config is carried in ``config``.
+        :param config: Optional dict serialized to JSON for non-SQL kinds. For a
+            ``sql`` source, ``sql`` holds the SELECT and ``config`` is unused.
+        """
         import datetime
+        import json as _json
 
         conn_enc = self._fernet.encrypt(conn_url.encode("utf-8"))
         updated = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+        config_json = _json.dumps(config) if config is not None else None
         with self._lock:
             self._conn.execute(
                 """
-                INSERT INTO sources (username, name, conn_enc, sql, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO sources (username, name, conn_enc, sql, kind, config, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(username, name) DO UPDATE SET
                     conn_enc=excluded.conn_enc, sql=excluded.sql,
+                    kind=excluded.kind, config=excluded.config,
                     updated_at=excluded.updated_at
                 """,
-                (username, name, conn_enc, sql, updated),
+                (username, name, conn_enc, sql, kind, config_json, updated),
             )
             self._conn.commit()
 
@@ -130,14 +147,21 @@ class Store:
         return [{"name": r[0], "updated_at": r[1]} for r in rows]
 
     def get_source(self, username: str, name: str) -> Optional[dict]:
+        import json as _json
+
         with self._lock:
             row = self._conn.execute(
-                "SELECT conn_enc, sql FROM sources WHERE username = ? AND name = ?",
+                "SELECT conn_enc, sql, kind, config FROM sources WHERE username = ? AND name = ?",
                 (username, name),
             ).fetchone()
         if not row:
             return None
-        return {"conn_url": self._fernet.decrypt(row[0]).decode("utf-8"), "sql": row[1]}
+        return {
+            "conn_url": self._fernet.decrypt(row[0]).decode("utf-8"),
+            "sql": row[1],
+            "kind": row[2] or "sql",
+            "config": _json.loads(row[3]) if row[3] else None,
+        }
 
     def delete_source(self, username: str, name: str) -> None:
         with self._lock:
