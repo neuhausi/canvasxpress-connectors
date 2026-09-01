@@ -49,6 +49,10 @@ sheets = ["google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-c
 analytics = ["google-auth>=2.28", "google-analytics-data>=0.18"]  # Google Analytics 4
 salesforce = ["simple-salesforce>=1.12"]                           # Salesforce SOQL
 servicenow = ["requests>=2.31"]                                    # ServiceNow Table API
+yahoo = ["requests>=2.31"]                                         # Yahoo Finance EOD prices + options
+stooq = ["requests>=2.31"]                                         # Stooq keyless EOD prices (OptionsWall)
+alphavantage = ["requests>=2.31"]                                  # Alpha Vantage prices + historical options (OptionsWall)
+nasdaq = ["requests>=2.31"]                                        # Nasdaq keyless option chain (OptionsWall)
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0"]
 all = [
     "SQLAlchemy>=2.0",

@@ -4,6 +4,8 @@ from .base import DataSource, to_cx
 
 __all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource",
            "GoogleAnalyticsSource", "SalesforceSource", "ServiceNowSource",
+           "YahooFinanceSource", "YahooOptionsSource", "StooqSource",
+           "AlphaVantageSource", "AlphaVantageOptionsSource", "NasdaqOptionsSource",
            "PackedMatrixSource"]
 
 
@@ -28,4 +30,22 @@ def __getattr__(name):
     if name == "ServiceNowSource":
         from .servicenow import ServiceNowSource
         return ServiceNowSource
+    if name == "YahooFinanceSource":
+        from .yahoo_finance import YahooFinanceSource
+        return YahooFinanceSource
+    if name == "YahooOptionsSource":
+        from .yahoo_finance import YahooOptionsSource
+        return YahooOptionsSource
+    if name == "StooqSource":
+        from .stooq import StooqSource
+        return StooqSource
+    if name == "AlphaVantageSource":
+        from .alphavantage import AlphaVantageSource
+        return AlphaVantageSource
+    if name == "AlphaVantageOptionsSource":
+        from .alphavantage import AlphaVantageOptionsSource
+        return AlphaVantageOptionsSource
+    if name == "NasdaqOptionsSource":
+        from .nasdaq import NasdaqOptionsSource
+        return NasdaqOptionsSource
     raise AttributeError(name)
