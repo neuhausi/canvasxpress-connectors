@@ -45,8 +45,14 @@ class NasdaqOptionsSource:
 
     _FIELDS = ("type", "strike", "expiration", "premium", "bid", "ask", "volume", "open_interest")
 
-    def __init__(self, symbol: str, asset_class: str = "stocks", limit: int = 0,
-                 from_date: str = "all", session=None):
+    def __init__(
+        self,
+        symbol: str,
+        asset_class: str = "stocks",
+        limit: int = 0,
+        from_date: str = "all",
+        session=None,
+    ):
         """
         :param symbol: Underlying ticker (e.g. ``"IBM"``).
         :param asset_class: Nasdaq asset class (``"stocks"`` default; ``"etf"`` / ``"index"``).
@@ -70,11 +76,13 @@ class NasdaqOptionsSource:
             import requests  # lazy: the core package doesn't require requests
 
             session = requests.Session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-                "Accept": "application/json",
-            })
+            session.headers.update(
+                {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+                    "Accept": "application/json",
+                }
+            )
         response = session.get(_HOST + self.symbol + "/option-chain", params=params, timeout=60)
         response.raise_for_status()
         payload = response.json() or {}
@@ -98,16 +106,18 @@ class NasdaqOptionsSource:
             # expiryDate (e.g. "Sep 18", which lacks the year).
             expiry = current_expiry or _parse_expiry(row.get("expiryDate"))
             for side, prefix in (("call", "c_"), ("put", "p_")):
-                contracts.append({
-                    "type": side,
-                    "strike": strike,
-                    "expiration": expiry,
-                    "premium": _num(row.get(prefix + "Last")),
-                    "bid": _num(row.get(prefix + "Bid")),
-                    "ask": _num(row.get(prefix + "Ask")),
-                    "volume": _num(row.get(prefix + "Volume")) or 0.0,
-                    "open_interest": _num(row.get(prefix + "Openinterest")) or 0.0,
-                })
+                contracts.append(
+                    {
+                        "type": side,
+                        "strike": strike,
+                        "expiration": expiry,
+                        "premium": _num(row.get(prefix + "Last")),
+                        "bid": _num(row.get(prefix + "Bid")),
+                        "ask": _num(row.get(prefix + "Ask")),
+                        "volume": _num(row.get(prefix + "Volume")) or 0.0,
+                        "open_interest": _num(row.get(prefix + "Openinterest")) or 0.0,
+                    }
+                )
         return contracts
 
     def read(self) -> Tuple[Sequence[str], Sequence[Sequence[Any]]]:

@@ -21,8 +21,14 @@ class StooqSource:
 
     _HOST = "https://stooq.com/q/d/l/"
 
-    def __init__(self, symbol: str, interval: str = "d",
-                 date_from: Optional[str] = None, date_to: Optional[str] = None, session=None):
+    def __init__(
+        self,
+        symbol: str,
+        interval: str = "d",
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        session=None,
+    ):
         """
         :param symbol: Ticker; a plain US symbol gets the ``.us`` suffix (``"IBM"`` -> ``ibm.us``).
         :param interval: ``d`` (daily, default), ``w`` (weekly) or ``m`` (monthly).
@@ -50,11 +56,13 @@ class StooqSource:
             import requests  # lazy: the core package doesn't require requests
 
             session = requests.Session()
-            session.headers.update({
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-                "Accept": "text/csv,*/*",
-            })
+            session.headers.update(
+                {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+                    "Accept": "text/csv,*/*",
+                }
+            )
 
         response = session.get(self._HOST, params=params, timeout=60)
         response.raise_for_status()
@@ -62,7 +70,8 @@ class StooqSource:
         if not text.lstrip().lower().startswith("date"):
             raise ValueError(
                 "Stooq did not return CSV (likely an anti-bot challenge for this IP); "
-                "run from a normal network or inject an authorized session.")
+                "run from a normal network or inject an authorized session."
+            )
 
         lines = [ln for ln in text.splitlines() if ln.strip()]
         header = [c.strip() for c in lines[0].split(",")]
@@ -73,7 +82,7 @@ class StooqSource:
             for i, cell in enumerate(cells):
                 cell = cell.strip()
                 if i == 0:
-                    row.append(cell)                     # Date (sample axis)
+                    row.append(cell)  # Date (sample axis)
                 else:
                     try:
                         row.append(float(cell))

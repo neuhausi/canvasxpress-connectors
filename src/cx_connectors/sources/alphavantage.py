@@ -54,8 +54,12 @@ class AlphaVantageSource:
 
     def read(self) -> Tuple[Sequence[str], Sequence[Sequence[Any]]]:
         """Return ``(header, rows)`` — one row per trading day, ascending by date."""
-        params = {"function": "TIME_SERIES_DAILY", "symbol": self.symbol,
-                  "outputsize": self.output_size, "apikey": self.api_key}
+        params = {
+            "function": "TIME_SERIES_DAILY",
+            "symbol": self.symbol,
+            "outputsize": self.output_size,
+            "apikey": self.api_key,
+        }
         response = _session(self._session).get(_HOST, params=params, timeout=60)
         response.raise_for_status()
         payload = response.json()
@@ -66,22 +70,35 @@ class AlphaVantageSource:
         rows: List[List[Any]] = []
         for date in sorted(series.keys()):
             bar = series[date]
-            rows.append([
-                date,
-                float(bar.get("1. open", 0)),
-                float(bar.get("2. high", 0)),
-                float(bar.get("3. low", 0)),
-                float(bar.get("4. close", 0)),
-                float(bar.get("5. volume", 0)),
-            ])
+            rows.append(
+                [
+                    date,
+                    float(bar.get("1. open", 0)),
+                    float(bar.get("2. high", 0)),
+                    float(bar.get("3. low", 0)),
+                    float(bar.get("4. close", 0)),
+                    float(bar.get("5. volume", 0)),
+                ]
+            )
         return header, rows
 
 
 class AlphaVantageOptionsSource:
     """A full option chain via ``HISTORICAL_OPTIONS`` (all expirations for a symbol/date)."""
 
-    _FIELDS = ("contractID", "type", "strike", "expiration",
-               "last", "mark", "bid", "ask", "volume", "open_interest", "implied_volatility")
+    _FIELDS = (
+        "contractID",
+        "type",
+        "strike",
+        "expiration",
+        "last",
+        "mark",
+        "bid",
+        "ask",
+        "volume",
+        "open_interest",
+        "implied_volatility",
+    )
 
     def __init__(self, symbol: str, api_key: str, date: Optional[str] = None, session=None):
         """

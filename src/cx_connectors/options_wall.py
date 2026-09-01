@@ -14,7 +14,7 @@ offers :func:`fetch_options_wall`, a one-call convenience that wires the connect
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 
@@ -35,10 +35,24 @@ def _bs_price(spot: float, strike: float, t: float, rate: float, sigma: float, k
     return strike * math.exp(-rate * t) * _norm_cdf(-d2) - spot * _norm_cdf(-d1)
 
 
-def _implied_vol(price: Optional[float], spot: Optional[float], strike: Optional[float],
-                 t: float, rate: float, kind: str) -> Optional[float]:
+def _implied_vol(
+    price: Optional[float],
+    spot: Optional[float],
+    strike: Optional[float],
+    t: float,
+    rate: float,
+    kind: str,
+) -> Optional[float]:
     """Solve Black-Scholes for the implied volatility (bisection); None if price is unusable."""
-    if price is None or spot is None or strike is None or price <= 0 or spot <= 0 or strike <= 0 or t <= 0:
+    if (
+        price is None
+        or spot is None
+        or strike is None
+        or price <= 0
+        or spot <= 0
+        or strike <= 0
+        or t <= 0
+    ):
         return None
     intrinsic = max(0.0, (spot - strike) if kind == "call" else (strike - spot))
     if price < intrinsic - 1e-6:
@@ -99,8 +113,12 @@ def _normalize_contract(record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
-def _pick_expiry(contracts: List[Dict[str, Any]], last_date: Optional[str],
-                 target_days: int = 45, window: Tuple[int, int] = (15, 90)) -> Optional[str]:
+def _pick_expiry(
+    contracts: List[Dict[str, Any]],
+    last_date: Optional[str],
+    target_days: int = 45,
+    window: Tuple[int, int] = (15, 90),
+) -> Optional[str]:
     """Choose the most *liquid* expiry (a real options wall wants the monthly, not a thin weekly).
 
     Prefers the expiry with the most contracts among those roughly ``window`` days out (a proxy
@@ -123,7 +141,9 @@ def _pick_expiry(contracts: List[Dict[str, Any]], last_date: Optional[str],
         counts[exp] = counts.get(exp, 0) + 1
         if exp not in days:
             try:
-                days[exp] = (datetime.strptime(str(exp)[:10], "%Y-%m-%d") - base).days if base else 1e9
+                days[exp] = (
+                    (datetime.strptime(str(exp)[:10], "%Y-%m-%d") - base).days if base else 1e9
+                )
             except ValueError:
                 days[exp] = 1e9
     if not counts:
@@ -147,11 +167,18 @@ def _price_columns(header: Sequence[str]) -> Dict[str, int]:
     }
 
 
-def build_options_wall(price_header: Sequence[str], price_rows: Sequence[Sequence[Any]],
-                       option_contracts: Sequence[Dict[str, Any]], symbol: str = "",
-                       expiry: Optional[str] = None, flank_metric: str = "iv",
-                       strike_pad: float = 0.15, title: Optional[str] = None,
-                       compute_iv: bool = True, risk_free_rate: float = 0.04) -> Dict[str, Any]:
+def build_options_wall(
+    price_header: Sequence[str],
+    price_rows: Sequence[Sequence[Any]],
+    option_contracts: Sequence[Dict[str, Any]],
+    symbol: str = "",
+    expiry: Optional[str] = None,
+    flank_metric: str = "iv",
+    strike_pad: float = 0.15,
+    title: Optional[str] = None,
+    compute_iv: bool = True,
+    risk_free_rate: float = 0.04,
+) -> Dict[str, Any]:
     """Build the OptionsWall ``{data, config}`` object.
 
     :param price_header: Price column names (Date first, then OHLC...).
@@ -178,8 +205,11 @@ def build_options_wall(price_header: Sequence[str], price_rows: Sequence[Sequenc
 
     normalized = [c for c in (_normalize_contract(x) for x in option_contracts) if c]
     chosen_expiry = expiry or _pick_expiry(normalized, dates[-1] if dates else None)
-    in_expiry = [c for c in normalized if str(c["expiration"])[:10] == str(chosen_expiry)[:10]] \
-        if chosen_expiry else normalized
+    in_expiry = (
+        [c for c in normalized if str(c["expiration"])[:10] == str(chosen_expiry)[:10]]
+        if chosen_expiry
+        else normalized
+    )
 
     # Strike window: at least ±strike_pad around spot, but WIDENED to cover the shown price
     # range so the option wall spans the same vertical extent as the candlesticks (otherwise the
@@ -202,11 +232,14 @@ def build_options_wall(price_header: Sequence[str], price_rows: Sequence[Sequenc
                 strike = c.get("strike")
                 # IV is only trustworthy from OUT-OF-THE-MONEY options (ITM premium is ~all
                 # intrinsic, so the solver returns noise). Calls: K>=spot; puts: K<=spot.
-                otm = ((c["type"] == "call" and strike is not None and strike >= spot) or
-                       (c["type"] == "put" and strike is not None and strike <= spot))
+                otm = (c["type"] == "call" and strike is not None and strike >= spot) or (
+                    c["type"] == "put" and strike is not None and strike <= spot
+                )
                 if not otm:
                     continue
-                iv = _implied_vol(c.get("premium"), spot, strike, t_years, risk_free_rate, c["type"])
+                iv = _implied_vol(
+                    c.get("premium"), spot, strike, t_years, risk_free_rate, c["type"]
+                )
                 # drop implausible solutions (deep-OTM pennies / bad quotes)
                 c["iv"] = iv if (iv is not None and 0.03 <= iv <= 2.0) else None
 
@@ -249,13 +282,21 @@ def build_options_wall(price_header: Sequence[str], price_rows: Sequence[Sequenc
     }
 
 
-def build_options_wall_multi(price_header: Sequence[str], price_rows: Sequence[Sequence[Any]],
-                             option_contracts: Sequence[Dict[str, Any]], symbol: str = "",
-                             flank_metric: str = "iv", strike_pad: float = 0.15,
-                             max_expiries: int = 10, min_contracts: int = 20,
-                             compute_iv: bool = True, risk_free_rate: float = 0.04,
-                             select: str = "liquid", near_days: int = 56,
-                             far_gap_days: int = 25) -> Dict[str, Any]:
+def build_options_wall_multi(
+    price_header: Sequence[str],
+    price_rows: Sequence[Sequence[Any]],
+    option_contracts: Sequence[Dict[str, Any]],
+    symbol: str = "",
+    flank_metric: str = "iv",
+    strike_pad: float = 0.15,
+    max_expiries: int = 10,
+    min_contracts: int = 20,
+    compute_iv: bool = True,
+    risk_free_rate: float = 0.04,
+    select: str = "liquid",
+    near_days: int = 56,
+    far_gap_days: int = 25,
+) -> Dict[str, Any]:
     """Build a MULTI-EXPIRY OptionsWall payload for an expiry-slider dashboard.
 
     Returns the shared price series plus one option chain per expiry, so a UI can slide
@@ -301,7 +342,9 @@ def build_options_wall_multi(price_header: Sequence[str], price_rows: Sequence[S
     if select == "calendar":
         # Date-first ladder: all near-term expiries (weeklies), then ~monthly spacing further out.
         try:
-            base = datetime.strptime(str(price_rows[-1][0])[:10], "%Y-%m-%d") if price_rows else None
+            base = (
+                datetime.strptime(str(price_rows[-1][0])[:10], "%Y-%m-%d") if price_rows else None
+            )
         except (ValueError, IndexError):
             base = None
         chosen = []
@@ -326,9 +369,17 @@ def build_options_wall_multi(price_header: Sequence[str], price_rows: Sequence[S
     spot = None
     chains: Dict[str, Any] = {}
     for exp in chosen:
-        obj = build_options_wall(price_header, price_rows, option_contracts, symbol=symbol,
-                                 expiry=exp, flank_metric=flank_metric, strike_pad=strike_pad,
-                                 compute_iv=compute_iv, risk_free_rate=risk_free_rate)
+        obj = build_options_wall(
+            price_header,
+            price_rows,
+            option_contracts,
+            symbol=symbol,
+            expiry=exp,
+            flank_metric=flank_metric,
+            strike_pad=strike_pad,
+            compute_iv=compute_iv,
+            risk_free_rate=risk_free_rate,
+        )
         if data is None:
             data = obj["data"]
             spot = obj["config"]["optionsWallSpot"]
@@ -338,15 +389,23 @@ def build_options_wall_multi(price_header: Sequence[str], price_rows: Sequence[S
         "symbol": symbol,
         "spot": spot,
         "flankMetric": flank_metric,
-        "data": data or {"y": {"vars": ["Open", "High", "Low", "Close"], "smps": [], "data": [[], [], [], []]}},
+        "data": data
+        or {"y": {"vars": ["Open", "High", "Low", "Close"], "smps": [], "data": [[], [], [], []]}},
         "expiries": chosen,
         "chains": chains,
     }
 
 
-def fetch_options_wall(symbol: str, api_key: Optional[str] = None, provider: str = "alphavantage",
-                       expiry: Optional[str] = None, flank_metric: str = "iv",
-                       output_size: str = "compact", session=None, **kwargs) -> Dict[str, Any]:
+def fetch_options_wall(
+    symbol: str,
+    api_key: Optional[str] = None,
+    provider: str = "alphavantage",
+    expiry: Optional[str] = None,
+    flank_metric: str = "iv",
+    output_size: str = "compact",
+    session=None,
+    **kwargs,
+) -> Dict[str, Any]:
     """Fetch prices + an option chain and build the OptionsWall object in one call.
 
     ``provider`` selects the data source:
@@ -368,29 +427,39 @@ def fetch_options_wall(symbol: str, api_key: Optional[str] = None, provider: str
     option_contracts = kwargs.get("option_contracts")
 
     if provider == "alphavantage":
-        from .sources.alphavantage import AlphaVantageSource, AlphaVantageOptionsSource
+        from .sources.alphavantage import AlphaVantageOptionsSource, AlphaVantageSource
+
         if not api_key:
             raise ValueError("alphavantage provider requires api_key")
-        header, rows = AlphaVantageSource(symbol, api_key, output_size=output_size, session=session).read()
+        header, rows = AlphaVantageSource(
+            symbol, api_key, output_size=output_size, session=session
+        ).read()
         if option_contracts is None:
-            option_contracts = AlphaVantageOptionsSource(symbol, api_key, date=None, session=session).read_contracts()
+            option_contracts = AlphaVantageOptionsSource(
+                symbol, api_key, date=None, session=session
+            ).read_contracts()
     elif provider == "nasdaq":
         # The working "real" path: Alpha Vantage daily prices (free key) + Nasdaq option chain
         # (keyless; premium + open-interest, no IV — pair with flank_metric="premium").
         from .sources.alphavantage import AlphaVantageSource
         from .sources.nasdaq import NasdaqOptionsSource
+
         if not api_key:
             raise ValueError("nasdaq provider uses Alpha Vantage for prices; pass api_key")
-        header, rows = AlphaVantageSource(symbol, api_key, output_size=output_size, session=session).read()
+        header, rows = AlphaVantageSource(
+            symbol, api_key, output_size=output_size, session=session
+        ).read()
         if option_contracts is None:
             option_contracts = NasdaqOptionsSource(symbol, session=session).read_contracts()
     elif provider == "stooq":
         from .sources.stooq import StooqSource
+
         header, rows = StooqSource(symbol, session=session).read()
         if option_contracts is None:
             raise ValueError("stooq provides prices only; pass option_contracts= for the chain")
     elif provider == "yahoo":
         from .sources.yahoo_finance import YahooFinanceSource, YahooOptionsSource
+
         header, rows = YahooFinanceSource(symbol, session=session).read()
         if option_contracts is None:
             oh, orows = YahooOptionsSource(symbol, session=session).read()
@@ -398,8 +467,14 @@ def fetch_options_wall(symbol: str, api_key: Optional[str] = None, provider: str
     else:
         raise ValueError("unknown provider: " + str(provider))
 
-    return build_options_wall(header, rows, option_contracts or [], symbol=symbol,
-                              expiry=expiry, flank_metric=flank_metric)
+    return build_options_wall(
+        header,
+        rows,
+        option_contracts or [],
+        symbol=symbol,
+        expiry=expiry,
+        flank_metric=flank_metric,
+    )
 
 
 def _main(argv: Optional[Sequence[str]] = None) -> int:
@@ -417,29 +492,42 @@ def _main(argv: Optional[Sequence[str]] = None) -> int:
     # Optional convenience: load a local .env (searched upward from the CWD) so
     # ALPHAVANTAGE_API_KEY is picked up automatically when run from the repo.
     try:
-        from dotenv import load_dotenv, find_dotenv
+        from dotenv import find_dotenv, load_dotenv
+
         load_dotenv(find_dotenv(usecwd=True))
     except Exception:
         pass
 
     parser = argparse.ArgumentParser(description="Build a CanvasXpress OptionsWall JSON.")
     parser.add_argument("--symbol", required=True, help="Ticker, e.g. IBM")
-    parser.add_argument("--provider", default="nasdaq",
-                        choices=["nasdaq", "alphavantage", "stooq", "yahoo"])
-    parser.add_argument("--api-key", dest="api_key", default=None,
-                        help="Provider API key (falls back to $ALPHAVANTAGE_API_KEY / .env)")
+    parser.add_argument(
+        "--provider", default="nasdaq", choices=["nasdaq", "alphavantage", "stooq", "yahoo"]
+    )
+    parser.add_argument(
+        "--api-key",
+        dest="api_key",
+        default=None,
+        help="Provider API key (falls back to $ALPHAVANTAGE_API_KEY / .env)",
+    )
     parser.add_argument("--expiry", default=None, help="Force an expiry YYYY-MM-DD")
-    parser.add_argument("--flank-metric", dest="flank_metric", default="iv",
-                        choices=["iv", "premium"])
-    parser.add_argument("--output-size", dest="output_size", default="compact",
-                        choices=["compact", "full"])
+    parser.add_argument(
+        "--flank-metric", dest="flank_metric", default="iv", choices=["iv", "premium"]
+    )
+    parser.add_argument(
+        "--output-size", dest="output_size", default="compact", choices=["compact", "full"]
+    )
     parser.add_argument("--out", default=None, help="Output file (default: stdout)")
     args = parser.parse_args(argv)
 
     api_key = args.api_key or os.environ.get("ALPHAVANTAGE_API_KEY")
-    obj = fetch_options_wall(args.symbol, api_key=api_key, provider=args.provider,
-                             expiry=args.expiry, flank_metric=args.flank_metric,
-                             output_size=args.output_size)
+    obj = fetch_options_wall(
+        args.symbol,
+        api_key=api_key,
+        provider=args.provider,
+        expiry=args.expiry,
+        flank_metric=args.flank_metric,
+        output_size=args.output_size,
+    )
     text = json.dumps(obj, indent=2)
     if args.out:
         with open(args.out, "w") as fh:

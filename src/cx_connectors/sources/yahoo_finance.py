@@ -61,8 +61,14 @@ class YahooFinanceSource:
 
     _HOST = "https://query1.finance.yahoo.com/v8/finance/chart/"
 
-    def __init__(self, symbol: str, range: str = "1y", interval: str = "1d",
-                 include_adjclose: bool = True, session=None):
+    def __init__(
+        self,
+        symbol: str,
+        range: str = "1y",
+        interval: str = "1d",
+        include_adjclose: bool = True,
+        session=None,
+    ):
         """
         :param symbol: Ticker (e.g. ``"AAPL"``, ``"^GSPC"``, ``"BTC-USD"``).
         :param range: Look-back window Yahoo accepts — ``1d``, ``5d``, ``1mo``, ``3mo``,
@@ -114,11 +120,13 @@ class YahooFinanceSource:
             # Yahoo pads incomplete candles with nulls — skip a day with no close.
             if i >= len(closes) or closes[i] is None:
                 continue
-            row: List[Any] = [_epoch_to_date(ts),
-                              opens[i] if i < len(opens) else None,
-                              highs[i] if i < len(highs) else None,
-                              lows[i] if i < len(lows) else None,
-                              closes[i]]
+            row: List[Any] = [
+                _epoch_to_date(ts),
+                opens[i] if i < len(opens) else None,
+                highs[i] if i < len(highs) else None,
+                lows[i] if i < len(lows) else None,
+                closes[i],
+            ]
             if adjclose is not None:
                 row.append(adjclose[i] if i < len(adjclose) else None)
             row.append(volumes[i] if i < len(volumes) else None)
@@ -134,13 +142,30 @@ class YahooOptionsSource:
     # Contract fields pulled from each call/put record, in output order. ``contractSymbol``
     # is first so it becomes the CanvasXpress sample axis; ``type`` and the dates are
     # non-numeric annotations, the rest are numeric variables.
-    _FIELDS = ("contractSymbol", "type", "strike", "expiration", "lastTradeDate",
-               "lastPrice", "bid", "ask", "change", "percentChange",
-               "volume", "openInterest", "impliedVolatility")
+    _FIELDS = (
+        "contractSymbol",
+        "type",
+        "strike",
+        "expiration",
+        "lastTradeDate",
+        "lastPrice",
+        "bid",
+        "ask",
+        "change",
+        "percentChange",
+        "volume",
+        "openInterest",
+        "impliedVolatility",
+    )
     _DATE_FIELDS = ("expiration", "lastTradeDate")
 
-    def __init__(self, symbol: str, expiration: Optional[int] = None,
-                 kinds: Sequence[str] = ("calls", "puts"), session=None):
+    def __init__(
+        self,
+        symbol: str,
+        expiration: Optional[int] = None,
+        kinds: Sequence[str] = ("calls", "puts"),
+        session=None,
+    ):
         """
         :param symbol: Underlying ticker (e.g. ``"AAPL"``).
         :param expiration: Expiration as a UNIX epoch (seconds); ``None`` returns Yahoo's
