@@ -6,16 +6,22 @@ Proves the three things the README claims: the read-only guard accepts read_parq
 
 import pytest
 
-duckdb = pytest.importorskip("duckdb")
-pytest.importorskip("duckdb_engine")
-
 from cx_connectors.reshape import rows_to_cx
 from cx_connectors.sources.sql import SqlSource, assert_read_only, bind_param_names
 
+duckdb = pytest.importorskip("duckdb")
+pytest.importorskip("duckdb_engine")
+
+URL = "duckdb:///:memory:"
 SQL = """SELECT sample, avg(expr) AS mean_expr, avg(logfc) AS mean_logfc
            FROM read_parquet(:path)
           WHERE gene = :gene AND (:tissue IS NULL OR tissue = :tissue)
           GROUP BY sample ORDER BY sample"""
+
+
+def _read(path, gene, tissue):
+    """Run SQL over the Parquet file through SqlSource, returning (header, rows)."""
+    return SqlSource(URL, SQL, {"path": path, "gene": gene, "tissue": tissue}).read()
 
 
 @pytest.fixture(scope="module")
@@ -36,7 +42,7 @@ def test_read_only_guard_accepts_read_parquet():
 
 
 def test_parquet_query_binds_and_reshapes(parquet):
-    header, rows = SqlSource("duckdb:///:memory:", SQL, {"path": parquet, "gene": "g3", "tissue": None}).read()
+    header, rows = _read(parquet, "g3", None)
     assert header == ["sample", "mean_expr", "mean_logfc"]
     assert [r[0] for r in rows] == ["s0", "s1", "s2", "s3", "s4"]
     cx = rows_to_cx(header, rows)
@@ -46,8 +52,8 @@ def test_parquet_query_binds_and_reshapes(parquet):
 
 
 def test_null_bind_widens_and_value_narrows(parquet):
-    wide = SqlSource("duckdb:///:memory:", SQL, {"path": parquet, "gene": "g3", "tissue": None}).read()[1]
-    narrow = SqlSource("duckdb:///:memory:", SQL, {"path": parquet, "gene": "g3", "tissue": "tumor"}).read()[1]
+    wide = _read(parquet, "g3", None)[1]
+    narrow = _read(parquet, "g3", "tumor")[1]
     assert len(narrow) <= len(wide)
     # gene g3 = i % 20 == 3 -> i odd -> every row is 'normal', so 'tumor' selects nothing
     assert narrow == []
