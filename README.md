@@ -121,6 +121,7 @@ SQLAlchemy plus the right DBAPI driver:
 | Amazon Redshift | `[redshift]` | `redshift-connector` | `redshift+redshift_connector://user:pw@host:5439/db` |
 | Azure Synapse | `[mssql]` | `pyodbc` | `mssql+pyodbc://user:pw@host:1433/db?driver=ODBC+Driver+18+for+SQL+Server` |
 | Databricks | `[databricks]` | `databricks-sql-connector` | `databricks://token:<PAT>@<host>?http_path=/sql/1.0/warehouses/<id>&catalog=<c>&schema=<s>` |
+| DuckDB (Parquet / CSV / Arrow files) | `[duckdb]` | `duckdb-engine` | `duckdb:///:memory:` (query files with `read_parquet('…')`) or `duckdb:///path/to/file.duckdb` |
 
 The read-only `SELECT` guard and `:name` bind-parameter forwarding work identically across all
 of them, since they operate on the SQL string, not the backend. A few backend notes:
@@ -139,6 +140,35 @@ of them, since they operate on the SQL string, not the backend. A few backend no
 - **Amazon Redshift** is Postgres-wire-compatible: `redshift+redshift_connector://` uses Amazon's
   driver (recommended, supports IAM auth), but `postgresql+psycopg://…:5439/db` also works if you
   prefer the plain Postgres driver.
+
+### DuckDB — Parquet files at interactive speed (no database server)
+
+DuckDB is an in-process engine, so `pip install "canvasxpress-connectors[duckdb]"` is the whole
+setup: no server, no credentials. Point a `SELECT` at a Parquet file with `read_parquet()` and
+DuckDB pushes the `WHERE` and the column list **into the file scan** — it reads only the row groups
+and columns the query needs, so the table is never loaded:
+
+```python
+from cx_connectors.sources import SqlSource
+from cx_connectors.sources.base import to_cx
+
+data = to_cx(SqlSource(
+    "duckdb:///:memory:",
+    """SELECT sample, avg(expr) AS mean_expr, avg(logfc) AS mean_logfc
+         FROM read_parquet('/srv/data/expression.parquet')
+        WHERE gene = :gene AND (:tissue IS NULL OR tissue = :tissue)
+        GROUP BY sample ORDER BY sample""",
+    {"gene": "TP53", "tissue": None},
+))
+```
+
+Measured on a 10,000,000-row / 181 MB Parquet file (Mac Studio, DuckDB 1.5): the query above
+returns in **18–48 ms**, and a 5,000-row range filter (`WHERE expr BETWEEN :lo AND :hi`) in
+**29 ms**. Registered through the web app, the `:gene` / `:tissue` binds become live dashboard
+controls exactly like any other parameterized query (see below) — a 10M-row source that filters
+interactively without a warehouse. `read_parquet` also takes globs (`'data/*.parquet'`), HTTP(S)
+and S3 URLs (`INSTALL httpfs` on first use), and `read_csv_auto(...)` covers CSV. The read-only guard
+applies unchanged: it is still a single `SELECT`.
 
 ### Databricks
 

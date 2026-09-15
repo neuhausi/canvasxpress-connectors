@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "canvasxpress-connectors"
-version = "0.4.0"
+version = "0.5.0"
 description = "Feed CanvasXpress from authenticated data sources (databases, Google Sheets) — reshape rows into CanvasXpress data objects behind your own origin."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -44,6 +44,10 @@ redshift = ["SQLAlchemy>=2.0", "sqlalchemy-redshift>=0.8", "redshift-connector>=
 # Azure Synapse is SQL Server-wire-compatible — it reuses the [mssql] extra (mssql+pyodbc).
 # Databricks reuses SqlSource via its SQLAlchemy dialect (databricks+connector://).
 databricks = ["SQLAlchemy>=2.0", "databricks-sql-connector[sqlalchemy]>=3.0"]
+# DuckDB: in-process analytics over local/remote Parquet, CSV and Arrow files — read_parquet() with
+# predicate + projection pushdown, so a 10M-row file answers a filtered/aggregated query in ~20-50 ms
+# without ever loading the table. No connector code: SqlSource + the duckdb-engine dialect.
+duckdb = ["SQLAlchemy>=2.0", "duckdb>=1.0", "duckdb-engine>=0.13"]
 sheets = ["google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.120"]
 # SaaS/REST sources — not SQL; each has its own dedicated DataSource class.
 analytics = ["google-auth>=2.28", "google-analytics-data>=0.18"]  # Google Analytics 4
@@ -56,6 +60,7 @@ nasdaq = ["requests>=2.31"]                                        # Nasdaq keyl
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0"]
 all = [
     "SQLAlchemy>=2.0",
+    "duckdb>=1.0", "duckdb-engine>=0.13",
     "google-auth>=2.28", "google-auth-oauthlib>=1.2", "google-api-python-client>=2.120",
     "fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0",
 ]
