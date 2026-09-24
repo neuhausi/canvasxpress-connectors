@@ -348,6 +348,76 @@ To register many sources for a deployment at once (instead of the `/connectors` 
 config (`examples/_tools/sources.example.json`) — the DB files stay on the server; only the
 encrypted URL + SQL are stored, and it prints each source's declared bind params.
 
+## Pushdown queries: aggregate, filter and join in the database
+
+A dashboard over a large table should not fetch the table. A request to a SQL source can
+carry a declarative **pushdown query** in the `_q` parameter (JSON). The connector
+compiles it around the owner's `SELECT`, used as a subquery. The database then filters,
+groups, sorts and limits, and only the result travels:
+
+```text
+GET /api/data?source=orders&_q={"groupBy":["region"],
+    "measures":[{"fn":"sum","column":"amount"},{"fn":"count"}],
+    "where":[{"column":"status","op":"in","value":["won","open"]}],
+    "orderBy":[{"column":"sum_amount","desc":true}],"limit":100}
+```
+
+```sql
+SELECT region, sum(amount) AS sum_amount, count(*) AS count
+  FROM (<the source's SELECT>) AS cxq
+ WHERE status IN (?, ?) GROUP BY region ORDER BY sum_amount DESC LIMIT 101
+```
+
+**Parts of a query:**
+
+| Key | Takes |
+|---|---|
+| `groupBy` | Column names. Each result row's id joins the group values (`EMEA · 2026-01`), and every group column stays a column. |
+| `measures` | `{fn, column?, as?}`, where `fn` is `count`, `count_distinct`, `sum`, `avg` (or `mean`), `min` or `max`. The default output name is `fn_column` (`count` for `count(*)`). With no `groupBy`, one row of totals labelled `all`. |
+| `where` | `{column, op, value}`, where `op` is `=`, `!=`, `<`, `<=`, `>`, `>=`, `in`, `not_in`, `between` (`[low, high]`), `is_null` or `not_null`. |
+| `columns` | Rows mode: return only these columns, filtered, sorted and capped. |
+| `orderBy` | Output names, or `{column, desc}`. |
+| `limit` | 1 to 1,000,000. |
+
+**The response:**
+
+- **Row cap.** Results are capped at `CX_MAX_ROWS` (default 100,000). The
+  `X-Cx-Truncated: 1` header says rows were cut, and `X-Cx-Rows` gives the count.
+- **Empty results.** A filter that matches nothing returns an empty data object, not
+  an error.
+
+**Safety.** Nothing from the request becomes SQL text:
+
+- Column names must be columns of the source's own query (read from the database) and
+  are quoted by the dialect.
+- Functions and operators come from fixed lists.
+- Every value is a bound parameter.
+- The source's own `:name` parameters are still forwarded as bound parameters.
+
+**Columns.** `GET /api/columns?source=…` lists a source's columns, each with a sampled
+type (`number` or `text`), for building pushdown queries.
+
+**Joins in the database.** `GET /api/join?left=…&right=…&on=…&how=…` joins two of a
+user's SQL sources in their database, as one SQL `JOIN`. This needs both sources on
+the same connection (otherwise `400`: join them in the browser).
+
+- **Keys:** `on` is a column on both sides, `{"left": …, "right": …}`, or a list of
+  those. `smps` means each side's first column. `how` is `inner`, `left`, `right` or
+  `outer`.
+- **Output:** the left's columns, then the right's non-key columns. A clashing right
+  column gets the suffix `.<right_name>`, which matches the canvasxpress-dashboards
+  `kind:"join"`.
+- **Aggregating:** a `_q` pushdown query is run over the joined rows.
+
+**Scale.** With DuckDB over Parquet (see above), a grouped, filtered query over a
+2,000,000-row file returns in about 0.3 s, and 50 rows travel.
+
+In [canvasxpress-dashboards](https://github.com/neuhausi/canvasxpress-dashboards):
+
+- A connector source's `pushdown` block becomes `_q`.
+- Its Filters panel sends selections as `where` clauses and re-queries.
+- A `kind:"join"` with `pushdown` uses `/api/join`.
+
 ## Packed-matrix sources (CCLE / TCGA expression)
 
 Some reference databases store an expression / copy-number matrix in a **packed** form
@@ -396,6 +466,10 @@ config={"table": "expression", "value_col": "tpm", "name_col": "geneName",
 - `SqlSource` enforces a single read-only `SELECT`; still give the DB user least-privilege read access.
 - **Query params are bound, never interpolated**, and only the `:name` binds the SQL declares
   are forwarded — an injected `?foo=…` key never reaches the database.
+- **Pushdown queries** (`_q`, `/api/join`) are compiled with SQLAlchemy Core. Column names
+  are checked against the source's own columns and quoted by the dialect, functions and
+  operators come from fixed lists, and every value is bound. Results are capped at
+  `CX_MAX_ROWS`.
 - For production: HTTPS + `https_only=True` cookies, rate-limit `/auth/login`, secrets from a
   manager (not `.env`), and pool engines per source.
 

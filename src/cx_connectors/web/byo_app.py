@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from ..pushdown import PushdownError, parse_query, run_join, run_pushdown
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
 from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
@@ -87,6 +88,24 @@ def _read_saas_source(record: dict):
                             **cfg).read()
 
 
+def _pushdown_cx(header, rows, query):
+    """CanvasXpress data for a pushdown result.
+
+    A grouped result gets a row id made of its group values ("EMEA · 2026-01"),
+    so every group column stays a real column (to color, facet and filter by).
+    An empty result stays a valid (empty) object rather than an error, since a
+    filter may match nothing.
+    """
+    groups = query.get("groupBy") or []
+    if groups:
+        header = ["id"] + list(header)
+        rows = [[" · ".join(str(v) for v in r[:len(groups)])] + list(r) for r in rows]
+    if not rows:
+        measures = [h for h in header[1:] if h not in groups]
+        return {"y": {"vars": measures, "smps": [], "data": [[] for _ in measures]}}
+    return rows_to_cx(header, rows)
+
+
 def create_byo_app(
     store: Optional[Store] = None,
     session_secret: Optional[str] = None,
@@ -103,6 +122,11 @@ def create_byo_app(
         allow_signup = os.getenv("ALLOW_SIGNUP", "1") == "1"
     https_only = https_only or os.getenv("HTTPS_ONLY", "0") == "1"
     store = store or Store(db_path, encryption_key)
+
+    try:
+        row_cap = max(1, int(os.getenv("CX_MAX_ROWS", "100000")))
+    except ValueError:
+        row_cap = 100000
 
     app = FastAPI(title="canvasxpress-connectors · BYO database")
     app.add_middleware(
@@ -234,6 +258,18 @@ def create_byo_app(
                 return JSONResponse(rows_to_cx(header, rows))
 
             sql = record["sql"]
+            # A pushdown query (`_q`, JSON) runs aggregation/filtering/limits in
+            # the database around the owner's SELECT (see cx_connectors.pushdown).
+            pushdown = request.query_params.get("_q")
+            if pushdown:
+                declared = bind_param_names(sql)
+                params = {name: request.query_params.get(name) for name in declared}
+                query = parse_query(pushdown)
+                header, rows, truncated = run_pushdown(
+                    record["conn_url"], sql, params, query, row_cap)
+                return JSONResponse(_pushdown_cx(header, rows, query),
+                                    headers={"X-Cx-Rows": str(len(rows)),
+                                             "X-Cx-Truncated": "1" if truncated else "0"})
             # Forward request query params to the SQL, but ONLY the ones the query
             # explicitly declares as `:name` bind parameters — and always as bound
             # parameters, never string-interpolated. A declared param absent from
@@ -244,12 +280,67 @@ def create_byo_app(
             params = {name: request.query_params.get(name) for name in declared}
             header, rows = SqlSource(record["conn_url"], sql, params).read()
             return JSONResponse(rows_to_cx(header, rows))
-        except ReadOnlyViolation as exc:
+        except (ReadOnlyViolation, PushdownError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=502, detail="Database error: %s" % exc)
+
+    @app.get("/api/join")
+    def join(request: Request, left: str, right: str, on: str = "smps", how: str = "inner",
+             right_name: Optional[str] = None):
+        """Join two of the user's SQL sources in their database (same connection),
+        optionally aggregated with a pushdown query (``_q``)."""
+        user = require_user(request)
+        sides = []
+        for name in (left, right):
+            record = store.get_source(user, name)
+            if not record:
+                raise HTTPException(status_code=404, detail="No such source: %s" % name)
+            if record.get("kind") not in (None, "", "sql"):
+                raise HTTPException(status_code=400, detail="Only SQL sources can be joined here")
+            sql = record["sql"]
+            params = {n: request.query_params.get(n) for n in bind_param_names(sql)}
+            sides.append((record["conn_url"], sql, params))
+        try:
+            query = parse_query(request.query_params.get("_q") or "{}")
+            header, rows, truncated = run_join(sides[0], sides[1], on, how, right_name or right,
+                                               query, row_cap)
+        except (ReadOnlyViolation, PushdownError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Database error: %s" % exc)
+        return JSONResponse(_pushdown_cx(header, rows, query),
+                            headers={"X-Cx-Rows": str(len(rows)),
+                                     "X-Cx-Truncated": "1" if truncated else "0"})
+
+    @app.get("/api/columns")
+    def columns(request: Request, source: str):
+        """A SQL source's columns with a sampled type (``number`` or ``text``),
+        for building pushdown queries."""
+        user = require_user(request)
+        record = store.get_source(user, source)
+        if not record:
+            raise HTTPException(status_code=404, detail="No such source for this user")
+        if record.get("kind") not in (None, "", "sql"):
+            raise HTTPException(status_code=400, detail="Only SQL sources support pushdown")
+        sql = record["sql"]
+        params = {name: request.query_params.get(name) for name in bind_param_names(sql)}
+        try:
+            header, rows, _ = run_pushdown(record["conn_url"], sql, params,
+                                           {"limit": 200}, 200)
+        except (ReadOnlyViolation, PushdownError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail="Database error: %s" % exc)
+        out = []
+        for i, name in enumerate(header):
+            values = [r[i] for r in rows if r[i] is not None]
+            numeric = bool(values) and all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                           for v in values)
+            out.append({"name": name, "type": "number" if numeric else "text"})
+        return {"columns": out}
 
     if serve_static:
         app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
