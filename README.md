@@ -500,7 +500,7 @@ The store creates three tables on first start:
 |-------|----------|
 | `cxc_users` | Usernames + PBKDF2 password hashes |
 | `cxc_sources` | Per-user encrypted connection strings and SQL |
-| `cxc_tokens` | Per-user encrypted OAuth refresh tokens (`cxc_tokens`) |
+| `cxc_tokens` | Per-user encrypted OAuth refresh tokens (Sheets app) |
 
 The `cxc_` prefix lets the store share a database with other apps.
 

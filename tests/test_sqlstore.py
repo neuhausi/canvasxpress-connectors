@@ -197,26 +197,6 @@ def test_conn_url_not_stored_in_plaintext(store):
     assert store.get_source("alice", "s1")["conn_url"] == "sqlite:///secret_path.db"
 
 
-def test_two_instances_see_each_others_writes(tmp_path):
-    key = generate_key()
-    url = "sqlite:///" + str(tmp_path / "shared.db")
-    store_a = SqlStore(url, key)
-    store_b = SqlStore(url, key)
-    store_a.save_source("alice", "s1", "sqlite:///d.db", "SELECT 1")
-    assert store_b.get_source("alice", "s1") is not None
-
-
-def test_back_to_back_upsert_from_two_instances_leaves_one_row(tmp_path):
-    key = generate_key()
-    url = "sqlite:///" + str(tmp_path / "shared.db")
-    store_a = SqlStore(url, key)
-    store_b = SqlStore(url, key)
-    store_a.save_source("alice", "s1", "sqlite:///v1.db", "SELECT 1")
-    store_b.save_source("alice", "s1", "sqlite:///v2.db", "SELECT 2")
-    assert len(store_a.list_sources("alice")) == 1
-    assert store_a.get_source("alice", "s1")["conn_url"] == "sqlite:///v2.db"
-
-
 # ---------------------------------------------------------------------------
 # SqlTokenStore
 # ---------------------------------------------------------------------------
@@ -281,9 +261,25 @@ def test_open_store_sqlite_url_returns_sql_store(tmp_path):
     assert isinstance(s, SqlStore)
 
 
-def test_open_store_postgresql_url_returns_sql_store(tmp_path):
-    s = open_store("sqlite:///" + str(tmp_path / "pg.db"), generate_key())
-    assert isinstance(s, SqlStore)
+@pytest.mark.parametrize("url", [
+    "postgres://u:p@db.example/app",
+    "postgresql://u:p@db.example/app",
+    "postgresql+psycopg://u:p@db.example/app?sslmode=require",
+])
+def test_open_store_postgres_schemes_pick_sql_backend(monkeypatch, url):
+    # Stub the SQL classes so no connection is attempted; only the dispatch is tested.
+    import cx_connectors.sqlstore as sqlstore
+
+    monkeypatch.setattr(sqlstore, "SqlStore", lambda u, k: ("store", u))
+    monkeypatch.setattr(sqlstore, "SqlTokenStore", lambda u, k: ("tokens", u))
+    assert sqlstore.open_store(url, generate_key()) == ("store", url)
+    assert sqlstore.open_token_store(url, generate_key()) == ("tokens", url)
+
+
+def test_open_store_file_url_returns_stdlib_store(tmp_path):
+    path = str(tmp_path / "app.db")
+    assert isinstance(open_store("file://" + path, generate_key()), Store)
+    assert (tmp_path / "app.db").exists()
 
 
 def test_open_token_store_bare_path_returns_stdlib_store(tmp_path):

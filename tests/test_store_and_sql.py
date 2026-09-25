@@ -25,14 +25,20 @@ def _sql_store(tmp_path):
     return SqlStore("sqlite:///" + str(tmp_path / "sql.db"), generate_key())
 
 
-def _pg_store(tmp_path):
+def _drop_pg_tables():
+    # The SQL store uses fixed table names, so drop them first for per-test
+    # isolation on the shared server DB; create_all rebuilds.
     import sqlalchemy as sa
 
     engine = sa.create_engine(_PG_URL, future=True)
     with engine.begin() as conn:
         for tbl in ("cxc_sources", "cxc_users"):
             conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}"))
-    return SqlStore(_PG_URL, generate_key(), engine=engine)
+    return engine
+
+
+def _pg_store(tmp_path):
+    return SqlStore(_PG_URL, generate_key(), engine=_drop_pg_tables())
 
 
 _PARAMS = [(_stdlib_store, "stdlib"), (_sql_store, "sql")]
@@ -42,6 +48,35 @@ if _PG_URL:
 
 @pytest.fixture(params=[p[0] for p in _PARAMS], ids=[p[1] for p in _PARAMS])
 def store(request, tmp_path):
+    return request.param(tmp_path)
+
+
+# Openers return a zero-arg factory for fresh, independent store instances on one
+# shared location + key: each SqlStore builds its own engine, so two instances stand
+# in for two processes sharing the database.
+def _stdlib_opener(tmp_path):
+    path, key = str(tmp_path / "shared.db"), generate_key()
+    return lambda: Store(path, key)
+
+
+def _sql_opener(tmp_path):
+    url, key = "sqlite:///" + str(tmp_path / "shared.db"), generate_key()
+    return lambda: SqlStore(url, key)
+
+
+def _pg_opener(tmp_path):
+    _drop_pg_tables().dispose()
+    key = generate_key()
+    return lambda: SqlStore(_PG_URL, key)
+
+
+_OPENERS = [(_stdlib_opener, "stdlib"), (_sql_opener, "sql")]
+if _PG_URL:
+    _OPENERS.append((_pg_opener, "pg"))
+
+
+@pytest.fixture(params=[p[0] for p in _OPENERS], ids=[p[1] for p in _OPENERS])
+def open_shared(request, tmp_path):
     return request.param(tmp_path)
 
 
@@ -103,42 +138,24 @@ def test_resave_updates_kind_sql_config_and_updated_at(store):
     assert len(store.list_sources("alice")) == 1
 
 
-def test_conn_url_not_stored_in_plaintext_sql_backend(tmp_path):
-    """SQL-backend equivalent of the SQLite-file ciphertext check."""
-    import sqlalchemy as sa
-
-    key = generate_key()
-    s = SqlStore("sqlite:///" + str(tmp_path / "app.db"), key)
-    s.save_source("bob", "s1", "sqlite:///secret_path.db", "SELECT 1")
-    with s._engine.connect() as conn:
-        row = conn.execute(
-            sa.text("SELECT conn_enc FROM cxc_sources WHERE username='bob' AND name='s1'")
-        ).first()
-    raw = bytes(row[0]) if isinstance(row[0], memoryview) else row[0]
-    assert b"secret_path" not in raw
-    assert s.get_source("bob", "s1")["conn_url"] == "sqlite:///secret_path.db"
-
-
-def test_two_instances_see_each_others_writes(tmp_path):
-    """Two store instances on the same URL see each other's writes."""
-    key = generate_key()
-    url = "sqlite:///" + str(tmp_path / "shared.db")
-    a = SqlStore(url, key)
-    b = SqlStore(url, key)
+def test_two_instances_see_each_others_writes(open_shared):
+    """Two store instances on the same location see each other's writes."""
+    a, b = open_shared(), open_shared()
+    a.create_user("alice", "secret1")
     a.save_source("alice", "s1", "sqlite:///d.db", "SELECT 1")
-    assert b.get_source("alice", "s1") is not None
+    assert b.check_user("alice", "secret1")
+    assert b.list_sources("alice") == ["s1"]
+    assert b.get_source("alice", "s1")["conn_url"] == "sqlite:///d.db"
 
 
-def test_back_to_back_upsert_leaves_one_row(tmp_path):
+def test_back_to_back_upsert_leaves_one_row(open_shared):
     """The same (username, name) saved from two instances ends with one row."""
-    key = generate_key()
-    url = "sqlite:///" + str(tmp_path / "shared.db")
-    a = SqlStore(url, key)
-    b = SqlStore(url, key)
+    a, b = open_shared(), open_shared()
     a.save_source("alice", "s1", "sqlite:///v1.db", "SELECT 1")
     b.save_source("alice", "s1", "sqlite:///v2.db", "SELECT 2")
-    assert len(a.list_sources("alice")) == 1
+    assert a.list_sources("alice") == ["s1"]
     assert a.get_source("alice", "s1")["conn_url"] == "sqlite:///v2.db"
+    assert a.get_source("alice", "s1")["sql"] == "SELECT 2"
 
 
 # ---------------------------------------------------------------------------
@@ -270,16 +287,31 @@ def test_data_endpoint_forwards_declared_params_as_binds(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Web app with SqlStore backing
+# Web app with APP_DB_PATH as a database URL
 # ---------------------------------------------------------------------------
 
-def _byo_sql_client(store, tmp_path):
-    """Sign up alice, register a SQL source, log in; return TestClient."""
+def _sqlite_url(tmp_path):
+    return "sqlite:///" + str(tmp_path / "app.db")
+
+
+def _pg_url(tmp_path):
+    _drop_pg_tables().dispose()
+    return _PG_URL
+
+
+_URLS = [(_sqlite_url, "sql")]
+if _PG_URL:
+    _URLS.append((_pg_url, "pg"))
+
+
+@pytest.mark.parametrize("make_url", [u[0] for u in _URLS], ids=[u[1] for u in _URLS])
+def test_byo_app_db_path_url(tmp_path, make_url):
+    """A database URL in db_path (APP_DB_PATH) backs the app with the SQL store: a
+    signup + source registered through the API survive into a second app instance."""
     from fastapi.testclient import TestClient
 
     from cx_connectors.web.byo_app import create_byo_app
 
-    # Build a tiny SQLite data file for the registered source.
     data_db = str(tmp_path / "data.db")
     conn = sqlite3.connect(data_db)
     conn.execute("CREATE TABLE t (sample TEXT, v INT)")
@@ -287,37 +319,25 @@ def _byo_sql_client(store, tmp_path):
     conn.commit()
     conn.close()
 
-    store.create_user("alice", "secret1")
-    store.save_source("alice", "ds", "sqlite:///" + data_db,
-                      "SELECT sample, v FROM t ORDER BY sample")
-    app = create_byo_app(store=store, session_secret="test",
-                         encryption_key=generate_key(), serve_static=False)
-    client = TestClient(app)
-    r = client.post("/auth/login", json={"username": "alice", "password": "secret1"})
-    assert r.status_code == 200
-    return client
+    url, key = make_url(tmp_path), generate_key()
 
+    def new_app():
+        return create_byo_app(db_path=url, session_secret="test", encryption_key=key,
+                              allow_signup=True, serve_static=False)
 
-def test_byo_app_sql_store_sqlite(tmp_path):
-    key = generate_key()
-    store = SqlStore("sqlite:///" + str(tmp_path / "app.db"), key)
-    client = _byo_sql_client(store, tmp_path)
-    cx = client.get("/api/data", params={"source": "ds"}).json()
+    first = TestClient(new_app())
+    r = first.post("/auth/signup", json={"username": "alice", "password": "secret1"})
+    assert r.status_code == 200, r.text
+    r = first.post("/api/sources", json={"name": "ds", "conn_url": "sqlite:///" + data_db,
+                                         "sql": "SELECT sample, v FROM t ORDER BY sample"})
+    assert r.status_code == 200, r.text
+
+    # A second app on the same URL (another process, or the same one after a restart).
+    second = TestClient(new_app())
+    r = second.post("/auth/login", json={"username": "alice", "password": "secret1"})
+    assert r.status_code == 200, r.text
+    cx = second.get("/api/data", params={"source": "ds"}).json()
     assert cx["y"]["smps"] == ["s1", "s2"]
     assert cx["y"]["vars"] == ["v"]
-
-
-@pytest.mark.skipif(not _PG_URL, reason="CXC_TEST_PG_URL not set")
-def test_byo_app_sql_store_postgres(tmp_path):
-    import sqlalchemy as sa
-
-    engine = sa.create_engine(_PG_URL, future=True)
-    with engine.begin() as conn:
-        for tbl in ("cxc_sources", "cxc_users"):
-            conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}"))
-    key = generate_key()
-    store = SqlStore(_PG_URL, key, engine=engine)
-    client = _byo_sql_client(store, tmp_path)
-    cx = client.get("/api/data", params={"source": "ds"}).json()
-    assert cx["y"]["smps"] == ["s1", "s2"]
-    assert cx["y"]["vars"] == ["v"]
+    # And the rows live in the SQL store's cxc_* tables, not in a stray SQLite file.
+    assert SqlStore(url, key).list_sources("alice") == ["ds"]
