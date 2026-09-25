@@ -138,6 +138,7 @@ def test_sse_stream_calls_close_on_exit():
 # ------------------------------------------------------------------------------ endpoint
 def _client(tmp_path):
     from fastapi.testclient import TestClient
+
     from cx_connectors.web.byo_app import create_byo_app
 
     store = Store(str(tmp_path / "app.db"), generate_key())
@@ -190,6 +191,7 @@ def test_unknown_stream_is_404(tmp_path):
 
 def test_host_registered_stream_opens_per_user(tmp_path):
     from fastapi.testclient import TestClient
+
     from cx_connectors.web.byo_app import create_byo_app
 
     opened = []

@@ -23,10 +23,10 @@ from starlette.middleware.sessions import SessionMiddleware
 from ..pushdown import PushdownError, parse_query, run_join, run_pushdown
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
-from ..sources.simulated import SimulatedLiveSource
 from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
 from ..sources.salesforce import SalesforceSource
 from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
+from ..sources.simulated import SimulatedLiveSource
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
 from ..store import Store
 from .sse import sse_event_stream
