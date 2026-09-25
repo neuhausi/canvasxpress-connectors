@@ -19,6 +19,17 @@ def test_password_roundtrip_and_wrong_password(store):
     assert not store.create_user("alice", "again")  # duplicate username
 
 
+def test_set_password_replaces_an_existing_users_password_only(store):
+    store.create_user("alice", "secret1")
+    store.save_source("alice", "s", "sqlite:///x.db", "SELECT 1")
+    assert store.set_password("alice", "rotated1")
+    assert store.check_user("alice", "rotated1")
+    assert not store.check_user("alice", "secret1")
+    assert store.list_sources("alice") == ["s"]  # the user's sources are untouched
+    assert not store.set_password("nobody", "x")  # no such user: nothing is created
+    assert not store.check_user("nobody", "x")
+
+
 def test_connection_string_encrypted_at_rest(tmp_path):
     db = str(tmp_path / "app.db")
     store = Store(db, generate_key())

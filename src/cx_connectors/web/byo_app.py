@@ -16,20 +16,89 @@ import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..pushdown import PushdownError, parse_query, run_join, run_pushdown
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
+from ..sources.simulated import SimulatedLiveSource
 from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
 from ..sources.salesforce import SalesforceSource
 from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
 from ..store import Store
+from .sse import sse_event_stream
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+
+# Bounds for the live-demo tick cadence (seconds): fast enough to look live, slow enough
+# that a client cannot ask the server to spin. Target is "dashboard-live", not HFT.
+_STREAM_MIN_INTERVAL = 0.1
+_STREAM_MAX_INTERVAL = 60.0
+_STREAM_MAX_VARS = 20
+
+
+def _clamp_stream_interval(raw: Optional[str]) -> float:
+    """Parse the ``interval`` query param into a bounded tick cadence in seconds.
+
+    :param raw: The raw query value (or ``None``); non-numeric/absent falls back to 1s.
+    :returns: A float clamped to ``[_STREAM_MIN_INTERVAL, _STREAM_MAX_INTERVAL]``.
+    """
+    try:
+        interval = float(raw) if raw not in (None, "") else 1.0
+    except (TypeError, ValueError):
+        interval = 1.0
+    return max(_STREAM_MIN_INTERVAL, min(_STREAM_MAX_INTERVAL, interval))
+
+
+def _parse_stream_vars(raw: Optional[str]) -> list:
+    """Parse the demo stream's ``vars`` param (comma-separated) into a bounded series list.
+
+    :param raw: The raw query value (or ``None``); absent/empty falls back to a single series.
+    :returns: A list of 1..``_STREAM_MAX_VARS`` variable names.
+    """
+    names = [v.strip() for v in (raw or "").split(",") if v.strip()]
+    if not names:
+        names = ["metric"]
+    return names[:_STREAM_MAX_VARS]
+
+
+def _open_demo_stream(query, interval: float, user: str) -> SimulatedLiveSource:
+    """Open the built-in simulated metric feed (no upstream, no credential).
+
+    :param query: The request's query params; ``vars`` names the series.
+    :param interval: The clamped tick cadence in seconds.
+    :param user: The signed-in user (unused: the demo has no per-user data).
+    :returns: A fresh :class:`SimulatedLiveSource`.
+    """
+    return SimulatedLiveSource(variables=_parse_stream_vars(query.get("vars")), interval=interval)
+
+
+# Live streams every app offers, by name. ``open(query_params, interval, user)`` builds the
+# LiveSource for one subscription; hosts add their own via ``create_byo_app(live_streams=...)``.
+DEFAULT_LIVE_STREAMS = {
+    "demo": {
+        "title": "Simulated metrics (demo)",
+        "variables": ["cpu", "mem"],
+        "query": "vars=cpu,mem",
+        "open": _open_demo_stream,
+    },
+}
+
+
+def _parse_stream_max_ticks(raw: Optional[str]) -> Optional[int]:
+    """Parse the optional ``max`` param: end the demo stream after this many ticks.
+
+    :param raw: The raw query value (or ``None``); absent/invalid/non-positive means open-ended.
+    :returns: A positive int cap, or ``None`` for an unbounded stream.
+    """
+    try:
+        value = int(raw) if raw not in (None, "") else 0
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _servicenow_config_from_body(body: dict) -> dict:
@@ -114,7 +183,16 @@ def create_byo_app(
     allow_signup: Optional[bool] = None,
     https_only: bool = False,
     serve_static: bool = True,
+    live_streams: Optional[dict] = None,
 ) -> FastAPI:
+    """Build the BYO-database app.
+
+    :param live_streams: Extra live (SSE) streams to offer, ``name -> {"open", "title",
+        "variables", "query"}``, merged over :data:`DEFAULT_LIVE_STREAMS`. ``open(query_params,
+        interval, user)`` returns a :class:`~cx_connectors.sources.base.LiveSource`; it runs
+        server-side, so any upstream credential stays here (``user`` lets it pick the viewer's
+        own). ``query`` is a default query string the stream listing appends to its url.
+    """
     session_secret = session_secret or os.environ["SESSION_SECRET"]
     encryption_key = encryption_key or os.environ["ENCRYPTION_KEY"]
     db_path = db_path or os.getenv("APP_DB_PATH", "app.db")
@@ -341,6 +419,51 @@ def create_byo_app(
                                            for v in values)
             out.append({"name": name, "type": "number" if numeric else "text"})
         return {"columns": out}
+
+    # ---- live streaming (SSE) ----
+    streams = dict(DEFAULT_LIVE_STREAMS)
+    streams.update(live_streams or {})
+
+    @app.get("/api/streams")
+    def list_streams(request: Request):
+        """The live streams this server offers, for a dashboard's source picker: each
+        ``{name, title, url, variables}``, ``url`` relative to this app."""
+        require_user(request)
+        return {"streams": [
+            {"name": name, "title": entry.get("title") or name,
+             "url": "/api/stream/" + name + (("?" + entry["query"]) if entry.get("query") else ""),
+             "variables": list(entry.get("variables") or [])}
+            for name, entry in sorted(streams.items())
+        ]}
+
+    @app.get("/api/stream/{stream}")
+    async def stream_live(request: Request, stream: str):
+        """Server-Sent-Events stream of a named live source (``GET /api/streams`` lists them).
+
+        The browser opens an ``EventSource('/api/stream/<name>')`` and each ``tick`` event is a
+        CanvasXpress increment fed to ``instance.pushData(tick)``. The session cookie
+        authenticates the stream (EventSource sends cookies automatically). Common query
+        params: ``interval`` (seconds between ticks, clamped) and ``max`` (stop after N ticks;
+        omit/0 for an open-ended stream); a source may read more (the demo takes ``vars``).
+        """
+        user = require_user(request)
+        entry = streams.get(stream)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="No such stream: %s" % stream)
+        interval = _clamp_stream_interval(request.query_params.get("interval"))
+        max_ticks = _parse_stream_max_ticks(request.query_params.get("max"))
+        source = entry["open"](request.query_params, interval, user)
+        return StreamingResponse(
+            sse_event_stream(source, is_disconnected=request.is_disconnected,
+                             max_ticks=max_ticks),
+            media_type="text/event-stream",
+            headers={
+                # Never cache or let a proxy buffer an event stream.
+                "Cache-Control": "no-cache, no-transform",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     if serve_static:
         app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")

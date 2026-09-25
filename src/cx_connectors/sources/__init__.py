@@ -1,12 +1,13 @@
 """Data-source adapters. Each returns ``(header, rows)`` for ``reshape.rows_to_cx``."""
 
-from .base import DataSource, to_cx
+from .base import DataSource, LiveSource, Tick, format_sse, to_cx
 
-__all__ = ["DataSource", "to_cx", "SqlSource", "GoogleSheetsSource",
+__all__ = ["DataSource", "LiveSource", "Tick", "format_sse", "to_cx",
+           "SqlSource", "GoogleSheetsSource",
            "GoogleAnalyticsSource", "SalesforceSource", "ServiceNowSource",
            "YahooFinanceSource", "YahooOptionsSource", "StooqSource",
            "AlphaVantageSource", "AlphaVantageOptionsSource", "NasdaqOptionsSource",
-           "PackedMatrixSource"]
+           "PackedMatrixSource", "SimulatedLiveSource"]
 
 
 def __getattr__(name):
@@ -15,6 +16,9 @@ def __getattr__(name):
     if name == "SqlSource":
         from .sql import SqlSource
         return SqlSource
+    if name == "SimulatedLiveSource":
+        from .simulated import SimulatedLiveSource
+        return SimulatedLiveSource
     if name == "PackedMatrixSource":
         from .packed import PackedMatrixSource
         return PackedMatrixSource

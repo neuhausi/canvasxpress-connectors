@@ -51,11 +51,14 @@ Return `data` as JSON from an endpoint; the page does `new CanvasXpress("cx", da
 |-------|--------|-----|
 | Reshape | `cx_connectors.reshape` | rows → CanvasXpress `{y, x}` (core, no heavy deps) |
 | Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource` |
+| Live | `cx_connectors.sources` | `LiveSource` protocol (`poll()` → a `pushData` tick) + `SimulatedLiveSource`; streamed over SSE by `cx_connectors.web.sse` |
 | Store | `cx_connectors.store` | users (PBKDF2) + per-user **encrypted** connection strings |
-| Web | `cx_connectors.web` | `create_byo_app()` (databases + Salesforce/ServiceNow, login) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
+| Web | `cx_connectors.web` | `create_byo_app()` (databases + Salesforce/ServiceNow, login, live SSE streams: **`GET /api/streams`** lists them, **`GET /api/stream/<name>`** streams one; register your own with `live_streams=`) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
 
-Adding a backend (BigQuery, a REST API, CSV) = one class with a `read()` returning
-`(header, rows)`. Nothing else changes.
+Adding a request/response backend (BigQuery, a REST API, CSV) = one class with a `read()`
+returning `(header, rows)`. Adding a **live** backend = one class with `interval` + `poll()`
+returning a CanvasXpress tick (new samples); the SSE transport relays it to the browser's
+`pushData(tick)`. Nothing else changes.
 
 ## Runnable demo — bring-your-own-database, with login
 

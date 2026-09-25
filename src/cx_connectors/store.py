@@ -100,6 +100,23 @@ class Store:
             ).fetchone()
         return bool(row) and verify_password(password, row[0], row[1])
 
+    def set_password(self, username: str, password: str) -> bool:
+        """Replace an existing user's password (e.g. to re-key a derived credential).
+
+        :param username: The user.
+        :param password: The new password (stored salted and hashed, like at creation).
+        :returns: True when the user existed and was updated; False when there is no
+            such user (nobody is created).
+        """
+        salt, digest = hash_password(password)
+        with self._lock:
+            cursor = self._conn.execute(
+                "UPDATE users SET salt = ?, pw_hash = ? WHERE username = ?",
+                (salt, digest, username),
+            )
+            self._conn.commit()
+        return cursor.rowcount > 0
+
     # ---- per-user sources ----
     def save_source(self, username: str, name: str, conn_url: str, sql: str,
                     kind: str = "sql", config: Optional[dict] = None) -> None:
