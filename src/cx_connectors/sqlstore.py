@@ -93,6 +93,17 @@ class SqlStore:
             ).first()
         return bool(row) and verify_password(password, _b(row[0]), _b(row[1]))
 
+    def set_password(self, username: str, password: str) -> bool:
+        """Replace an existing user's password; False (nobody created) when absent."""
+        salt, digest = hash_password(password)
+        users = self._users
+        with self._engine.begin() as conn:
+            result = conn.execute(
+                users.update().where(users.c.username == username)
+                .values(salt=salt, pw_hash=digest)
+            )
+        return result.rowcount > 0
+
     # ---- per-user sources ----
     def save_source(self, username: str, name: str, conn_url: str, sql: str,
                     kind: str = "sql", config: Optional[dict] = None) -> None:
