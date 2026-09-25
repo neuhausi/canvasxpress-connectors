@@ -476,6 +476,40 @@ config={"table": "expression", "value_col": "tpm", "name_col": "geneName",
 - For production: HTTPS + `https_only=True` cookies, rate-limit `/auth/login`, secrets from a
   manager (not `.env`), and pool engines per source.
 
+## Postgres-backed store (multi-process / restart-safe)
+
+By default, users and their registered sources are stored in a local SQLite
+file (`app.db` / `tokens.db`).  For hosts that restart or run several
+processes — where a local file would be wiped at restart or each process would
+have its own copy — point `APP_DB_PATH` at a Postgres database instead:
+
+```bash
+export APP_DB_PATH="postgresql://user:pw@host:5432/db?sslmode=require"
+export ENCRYPTION_KEY=$(python -c "from cx_connectors.store import generate_key;print(generate_key())")
+export SESSION_SECRET=$(python -c "import secrets;print(secrets.token_urlsafe(32))")
+pip install "canvasxpress-connectors[postgres]"   # SQLAlchemy + psycopg driver
+```
+
+For the Sheets app, set `TOKEN_DB_PATH` the same way.  Both env vars accept
+`postgres://`, `postgresql://`, `postgresql+<driver>://` or `sqlite://` in
+addition to a bare file path (unchanged default).
+
+The store creates three tables on first start:
+
+| Table | Contents |
+|-------|----------|
+| `cxc_users` | Usernames + PBKDF2 password hashes |
+| `cxc_sources` | Per-user encrypted connection strings and SQL |
+| `cxc_tokens` | Per-user encrypted OAuth refresh tokens (`cxc_tokens`) |
+
+The `cxc_` prefix lets the store share a database with other apps.
+
+**`ENCRYPTION_KEY` must be set once and never changed.** It is a Fernet key
+from `cx_connectors.store.generate_key()`.  Changing it makes every stored
+connection string and token unreadable.
+
+There is no automatic migration from an existing SQLite file.
+
 ## Deploying the BYO-database demo behind a reverse-proxy subpath (canvasxpress.org)
 
 The demo runs as a plain localhost uvicorn service exposed by Apache under a
