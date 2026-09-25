@@ -7,6 +7,10 @@
 Each user logs in, registers their own database (connection string stored encrypted),
 and charts their own data via ``/api/data``. Users are isolated by the session cookie.
 Requires the ``web`` and ``sql`` extras.
+
+``APP_DB_PATH`` accepts either a bare SQLite file path (default ``app.db``) or a
+database URL.  Pass a Postgres URL (``postgresql://user:pw@host:5432/db``) for
+hosts that restart or run several processes — requires the ``postgres`` extra.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from ..sources.salesforce import SalesforceSource
 from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
 from ..sources.simulated import SimulatedLiveSource
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
+from ..sqlstore import open_store
 from ..store import Store
 from .sse import sse_event_stream
 
@@ -199,7 +204,7 @@ def create_byo_app(
     if allow_signup is None:
         allow_signup = os.getenv("ALLOW_SIGNUP", "1") == "1"
     https_only = https_only or os.getenv("HTTPS_ONLY", "0") == "1"
-    store = store or Store(db_path, encryption_key)
+    store = store or open_store(db_path, encryption_key)
 
     try:
         row_cap = max(1, int(os.getenv("CX_MAX_ROWS", "100000")))

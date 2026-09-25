@@ -267,3 +267,57 @@ def test_data_endpoint_forwards_declared_params_as_binds(tmp_path):
     inj = client.get("/api/data", params={"source": "sales", "region": "EMEA",
                                           "v": "0 OR 1=1"}).json()
     assert inj["y"]["smps"] == ["s1"]
+
+
+# ---------------------------------------------------------------------------
+# Web app with SqlStore backing
+# ---------------------------------------------------------------------------
+
+def _byo_sql_client(store, tmp_path):
+    """Sign up alice, register a SQL source, log in; return TestClient."""
+    from fastapi.testclient import TestClient
+
+    from cx_connectors.web.byo_app import create_byo_app
+
+    # Build a tiny SQLite data file for the registered source.
+    data_db = str(tmp_path / "data.db")
+    conn = sqlite3.connect(data_db)
+    conn.execute("CREATE TABLE t (sample TEXT, v INT)")
+    conn.executemany("INSERT INTO t VALUES (?,?)", [("s1", 10), ("s2", 20)])
+    conn.commit()
+    conn.close()
+
+    store.create_user("alice", "secret1")
+    store.save_source("alice", "ds", "sqlite:///" + data_db,
+                      "SELECT sample, v FROM t ORDER BY sample")
+    app = create_byo_app(store=store, session_secret="test",
+                         encryption_key=generate_key(), serve_static=False)
+    client = TestClient(app)
+    r = client.post("/auth/login", json={"username": "alice", "password": "secret1"})
+    assert r.status_code == 200
+    return client
+
+
+def test_byo_app_sql_store_sqlite(tmp_path):
+    key = generate_key()
+    store = SqlStore("sqlite:///" + str(tmp_path / "app.db"), key)
+    client = _byo_sql_client(store, tmp_path)
+    cx = client.get("/api/data", params={"source": "ds"}).json()
+    assert cx["y"]["smps"] == ["s1", "s2"]
+    assert cx["y"]["vars"] == ["v"]
+
+
+@pytest.mark.skipif(not _PG_URL, reason="CXC_TEST_PG_URL not set")
+def test_byo_app_sql_store_postgres(tmp_path):
+    import sqlalchemy as sa
+
+    engine = sa.create_engine(_PG_URL, future=True)
+    with engine.begin() as conn:
+        for tbl in ("cxc_sources", "cxc_users"):
+            conn.execute(sa.text(f"DROP TABLE IF EXISTS {tbl}"))
+    key = generate_key()
+    store = SqlStore(_PG_URL, key, engine=engine)
+    client = _byo_sql_client(store, tmp_path)
+    cx = client.get("/api/data", params={"source": "ds"}).json()
+    assert cx["y"]["smps"] == ["s1", "s2"]
+    assert cx["y"]["vars"] == ["v"]
