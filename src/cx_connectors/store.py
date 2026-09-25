@@ -81,17 +81,22 @@ class Store:
 
     # ---- users ----
     def create_user(self, username: str, password: str) -> bool:
+        """Create a user; False (and nothing changed) when the username is taken."""
         salt, digest = hash_password(password)
-        try:
-            with self._lock:
+        with self._lock:
+            try:
                 self._conn.execute(
                     "INSERT INTO users (username, salt, pw_hash) VALUES (?, ?, ?)",
                     (username, salt, digest),
                 )
                 self._conn.commit()
-            return True
-        except sqlite3.IntegrityError:
-            return False
+                return True
+            except sqlite3.IntegrityError:
+                # The failed INSERT leaves the implicit transaction open, holding a
+                # write lock on the database file: every other writer (another
+                # process opening the store) then fails with "database is locked".
+                self._conn.rollback()
+                return False
 
     def check_user(self, username: str, password: str) -> bool:
         with self._lock:

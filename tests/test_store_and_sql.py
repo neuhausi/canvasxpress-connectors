@@ -19,6 +19,22 @@ def test_password_roundtrip_and_wrong_password(store):
     assert not store.create_user("alice", "again")  # duplicate username
 
 
+def test_a_duplicate_create_user_does_not_lock_the_database(tmp_path):
+    # Regression: the failed INSERT left its transaction open, so the process kept a
+    # write lock and any other process opening the store got "database is locked"
+    # (a restarted server could not mount the connectors app).
+    path = str(tmp_path / "app.db")
+    store = Store(path, generate_key())
+    store.create_user("alice", "secret1")
+    assert not store.create_user("alice", "again")
+    assert not store._conn.in_transaction
+    other = sqlite3.connect(path, timeout=0.5)
+    other.execute("CREATE TABLE probe (x)")   # a write from another connection
+    other.commit()
+    other.close()
+    assert store.check_user("alice", "secret1")
+
+
 def test_set_password_replaces_an_existing_users_password_only(store):
     store.create_user("alice", "secret1")
     store.save_source("alice", "s", "sqlite:///x.db", "SELECT 1")
