@@ -9,6 +9,10 @@ their encrypted refresh token server-side, keyed by a signed-session uid. The br
 never sees a Google token or URL -- it calls /api/sheet-data, which reads that user's
 private sheet and returns a CanvasXpress data object. Requires the ``web`` and
 ``sheets`` extras.
+
+``TOKEN_DB_PATH`` accepts either a bare SQLite file path (default ``tokens.db``) or a
+database URL.  Pass a Postgres URL for hosts that restart or run several processes —
+requires the ``postgres`` extra.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..reshape import rows_to_cx
 from ..sources.google_sheets import GoogleSheetsSource
+from ..sqlstore import open_token_store
 from ..store import TokenStore
 
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static_sheets")
@@ -66,7 +71,7 @@ def create_sheets_app(
     encryption_key = encryption_key or os.environ["TOKEN_ENCRYPTION_KEY"]
     db_path = db_path or os.getenv("TOKEN_DB_PATH", "tokens.db")
     scopes = scopes or DEFAULT_SCOPES
-    token_store = token_store or TokenStore(db_path, encryption_key)
+    token_store = token_store or open_token_store(db_path, encryption_key)
     client_config = _client_config(client_id, client_secret, redirect_uri)
 
     app = FastAPI(title="canvasxpress-connectors · Google Sheets")

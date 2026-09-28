@@ -5,13 +5,17 @@ the source's reshape via an injected fake Sheets service, encrypted token storag
 and that /api/sheet-data enforces auth (401) without a connected user.
 """
 
+import os
 import sqlite3
 
 import pytest
 
 from cx_connectors.sources.base import to_cx
 from cx_connectors.sources.google_sheets import GoogleSheetsSource
+from cx_connectors.sqlstore import SqlTokenStore
 from cx_connectors.store import TokenStore, generate_key
+
+_PG_URL = os.getenv("CXC_TEST_PG_URL")
 
 
 class _FakeSheets:
@@ -33,6 +37,41 @@ class _FakeSheets:
         return {"values": self._values}
 
 
+# ---------------------------------------------------------------------------
+# Backend factories for token store
+# ---------------------------------------------------------------------------
+
+def _stdlib_token_store(tmp_path):
+    return TokenStore(str(tmp_path / "tokens.db"), generate_key())
+
+
+def _sql_token_store(tmp_path):
+    return SqlTokenStore("sqlite:///" + str(tmp_path / "sql_tokens.db"), generate_key())
+
+
+def _pg_token_store(tmp_path):
+    import sqlalchemy as sa
+
+    engine = sa.create_engine(_PG_URL, future=True)
+    with engine.begin() as conn:
+        conn.execute(sa.text("DROP TABLE IF EXISTS cxc_tokens"))
+    return SqlTokenStore(_PG_URL, generate_key(), engine=engine)
+
+
+_PARAMS = [(_stdlib_token_store, "stdlib"), (_sql_token_store, "sql")]
+if _PG_URL:
+    _PARAMS.append((_pg_token_store, "pg"))
+
+
+@pytest.fixture(params=[p[0] for p in _PARAMS], ids=[p[1] for p in _PARAMS])
+def token_store(request, tmp_path):
+    return request.param(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Google Sheets source tests (no backend)
+# ---------------------------------------------------------------------------
+
 def test_google_sheets_source_reshapes_via_injected_service():
     fake = _FakeSheets([
         ["Sample", "GeneA", "GeneB", "Category"],
@@ -52,7 +91,53 @@ def test_google_sheets_source_pads_ragged_rows():
     assert rows == [["S1", "5", ""]]
 
 
-def test_token_store_encrypts_refresh_token(tmp_path):
+# ---------------------------------------------------------------------------
+# Token store parity tests — all backends
+# ---------------------------------------------------------------------------
+
+def test_token_store_encrypts_refresh_token(token_store):
+    token_store.save("uid-1", "1//secret-refresh", "https://oauth2.googleapis.com/token",
+                     "cid", "csecret", ["scope-a"], email="a@example.com")
+    rec = token_store.load("uid-1")
+    assert rec["refresh_token"] == "1//secret-refresh"
+    assert rec["email"] == "a@example.com"
+    assert rec["scopes"] == ["scope-a"]
+
+
+def test_token_store_isolation_and_delete(token_store):
+    token_store.save("uid-1", "r", "u", "c", "s", ["x"])
+    assert token_store.load("uid-2") is None                 # other user sees nothing
+    token_store.delete("uid-1")
+    assert token_store.load("uid-1") is None
+
+
+def test_token_store_upsert(token_store):
+    token_store.save("uid-1", "old", "u", "c", "s", ["x"])
+    token_store.save("uid-1", "new", "u2", "c2", "s2", ["y", "z"])
+    rec = token_store.load("uid-1")
+    assert rec["refresh_token"] == "new"
+    assert rec["scopes"] == ["y", "z"]
+
+
+def test_token_not_stored_in_plaintext_sql(tmp_path):
+    """SQL-backend equivalent of the SQLite-file ciphertext check."""
+    import sqlalchemy as sa
+
+    ts = SqlTokenStore("sqlite:///" + str(tmp_path / "tok.db"), generate_key())
+    ts.save("uid-1", "1//secret-refresh", "u", "c", "s", ["x"])
+    with ts._engine.connect() as conn:
+        row = conn.execute(
+            sa.text("SELECT refresh_enc FROM cxc_tokens WHERE user_id='uid-1'")
+        ).first()
+    raw = bytes(row[0]) if isinstance(row[0], memoryview) else row[0]
+    assert b"secret-refresh" not in raw
+
+
+# ---------------------------------------------------------------------------
+# stdlib-only token store test (file-level check)
+# ---------------------------------------------------------------------------
+
+def test_token_store_encrypts_refresh_token_at_rest_stdlib(tmp_path):
     db = str(tmp_path / "tokens.db")
     ts = TokenStore(db, generate_key())
     ts.save("uid-1", "1//secret-refresh", "https://oauth2.googleapis.com/token",
@@ -65,13 +150,9 @@ def test_token_store_encrypts_refresh_token(tmp_path):
     assert rec["scopes"] == ["scope-a"]
 
 
-def test_token_store_isolation_and_delete(tmp_path):
-    ts = TokenStore(str(tmp_path / "t.db"), generate_key())
-    ts.save("uid-1", "r", "u", "c", "s", ["x"])
-    assert ts.load("uid-2") is None                 # other user sees nothing
-    ts.delete("uid-1")
-    assert ts.load("uid-1") is None
-
+# ---------------------------------------------------------------------------
+# App wiring test
+# ---------------------------------------------------------------------------
 
 def test_sheets_app_requires_connection():
     fastapi_testclient = pytest.importorskip("fastapi.testclient")
