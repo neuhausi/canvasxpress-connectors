@@ -59,6 +59,11 @@
       <div id="grpSql">
         <div class="row"><label>Conn URL</label><input id="sConn" type="text"
              placeholder="sqlite:///path.db  ·  postgresql+psycopg://user:pw@host/db"></div>
+        <div class="row" style="color:#888;font-size:13px;margin:-2px 0 6px 0">
+          Databricks: <code>databricks://token:&lt;PAT&gt;@host?http_path=…&amp;catalog=…&amp;schema=…</code> —
+          or, on Posit Connect, read as the signed-in viewer with
+          <code>databricks://posit-connect@host?…</code> (no token stored).
+        </div>
         <div class="row"><label>SELECT</label><textarea id="sSql"
              placeholder="SELECT sample, GeneA, GeneB, category FROM expression"></textarea></div>
       </div>

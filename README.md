@@ -202,6 +202,34 @@ work unchanged. Use a Databricks **personal access token** (or an OAuth M2M toke
 least-privilege user with read-only access to the warehouse. A runnable end-to-end example is
 in [`examples/databricks/`](examples/databricks/).
 
+#### Sign in as the viewer (Posit Connect OAuth)
+
+When the web app is deployed to **Posit Connect**, a Databricks source can sign in **as the
+signed-in viewer** instead of storing any credential — each viewer reads Databricks as
+themselves, and the source stores no token at all. It opts in with the username
+`posit-connect` and **no password**:
+
+```
+databricks://posit-connect@dbc-1234.cloud.databricks.com?http_path=/sql/1.0/warehouses/<id>&catalog=main&schema=default
+```
+
+Register it exactly like any other SQL source (same URL field, same read-only `SELECT`).
+On every request the app exchanges the viewer's `Posit-Connect-User-Session-Token` header
+for *that viewer's* Databricks access token (via [`posit-sdk`](https://pypi.org/project/posit-sdk/),
+the optional `[posit-connect]` extra) and connects with it — a fresh token per request,
+never stored, logged or cached. Normal `databricks://token:<PAT>@...` sources keep working
+unchanged.
+
+**Setup.** A Connect admin creates a Databricks **OAuth integration of the *Viewer* type**,
+and the content owner attaches it in the deployed content's **Access** panel. If more than
+one OAuth integration is attached, set `CXC_CONNECT_OAUTH_AUDIENCE` to the Databricks
+integration's GUID so the exchange targets the right one. Install the extra with
+`pip install 'canvasxpress-connectors[web,sql,posit-connect]'`.
+
+**Limitation.** A viewer-OAuth source only works for a signed-in viewer visiting the content
+on Connect. It has no credential of its own, so it cannot be read outside Connect or on a
+**scheduled dataset refresh** (no viewer → a clear 403); use a PAT source for scheduled data.
+
 ## Non-SQL sources (REST / SaaS APIs)
 
 Not every source is a database. SaaS APIs (Google Analytics, Salesforce, ServiceNow, …) have

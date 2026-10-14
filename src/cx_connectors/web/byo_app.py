@@ -24,6 +24,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from ..databricks_oauth import (
+    OAuthExchangeFailed,
+    ViewerSessionRequired,
+    resolve_conn_url,
+)
 from ..pushdown import PushdownError, parse_query, run_join, run_pushdown
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
@@ -160,6 +165,27 @@ def _read_saas_source(record: dict):
         return ServiceNowSource(oauth_token=token, **cfg).read()
     return ServiceNowSource(username=auth.get("username"), password=auth.get("password"),
                             **cfg).read()
+
+
+def _resolve_or_http(stored_url, headers, memo=None):
+    """Resolve a stored source URL for the current request (substituting the
+    viewer's freshly-exchanged Databricks token for an opted-in source), mapping
+    the viewer-OAuth failures to HTTP errors. Done BEFORE a handler's generic
+    ``except Exception -> 502`` so the clear cause is not swallowed.
+
+    :param stored_url: The source's stored connection URL.
+    :param headers: The request headers (for the viewer session token).
+    :param memo: Optional per-request ``{stored_url: resolved}`` cache (joins).
+    :returns: The URL to connect with.
+    :raises HTTPException: 403 when no viewer session token, 502 when the token
+        exchange failed; neither message contains a token.
+    """
+    try:
+        return resolve_conn_url(stored_url, headers, memo)
+    except ViewerSessionRequired as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except OAuthExchangeFailed as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 def _pushdown_cx(header, rows, query):
@@ -314,6 +340,12 @@ def create_byo_app(
         record = store.get_source(user, source)
         if not record:
             raise HTTPException(status_code=404, detail="No such source for this user")
+        # Resolve a viewer-OAuth Databricks URL to a freshly-tokened one up front,
+        # BEFORE the generic `except -> 502` below, so a missing-viewer 403 or a
+        # token-exchange error surfaces its real cause. SaaS sources (salesforce /
+        # servicenow) keep a JSON blob in `conn_url`, not a DB URL — never resolve it.
+        conn_url = (record["conn_url"] if record.get("kind") in ("salesforce", "servicenow")
+                    else _resolve_or_http(record["conn_url"], request.headers))
         try:
             # A 'packed' source reassembles a column-store matrix (CCLE/TCGA
             # expression) into a CanvasXpress object; its gene list comes from a
@@ -324,7 +356,7 @@ def create_byo_app(
                 raw = request.query_params.get(gene_param) or ""
                 genes = [g.strip() for g in raw.split(",") if g.strip()]
                 src = PackedMatrixSource(
-                    record["conn_url"], cfg["table"], cfg["value_col"], cfg.get("template_key"),
+                    conn_url, cfg["table"], cfg["value_col"], cfg.get("template_key"),
                     name_col=cfg.get("name_col", "name"),
                     json_table=cfg.get("json_table", "json"),
                     genes=genes, max_genes=cfg.get("max_genes", 200),
@@ -349,7 +381,7 @@ def create_byo_app(
                 params = {name: request.query_params.get(name) for name in declared}
                 query = parse_query(pushdown)
                 header, rows, truncated = run_pushdown(
-                    record["conn_url"], sql, params, query, row_cap)
+                    conn_url, sql, params, query, row_cap)
                 return JSONResponse(_pushdown_cx(header, rows, query),
                                     headers={"X-Cx-Rows": str(len(rows)),
                                              "X-Cx-Truncated": "1" if truncated else "0"})
@@ -361,7 +393,7 @@ def create_byo_app(
             # is ignored. This keeps the browser unable to alter the query shape.
             declared = bind_param_names(sql)
             params = {name: request.query_params.get(name) for name in declared}
-            header, rows = SqlSource(record["conn_url"], sql, params).read()
+            header, rows = SqlSource(conn_url, sql, params).read()
             return JSONResponse(rows_to_cx(header, rows))
         except (ReadOnlyViolation, PushdownError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -376,6 +408,10 @@ def create_byo_app(
         """Join two of the user's SQL sources in their database (same connection),
         optionally aggregated with a pushdown query (``_q``)."""
         user = require_user(request)
+        # One memo across both sides so two viewer-OAuth sources on the same
+        # database resolve to the SAME token string (run_join requires the two
+        # connection URLs to be equal). Resolution is before the 502 wrap below.
+        memo = {}
         sides = []
         for name in (left, right):
             record = store.get_source(user, name)
@@ -385,7 +421,8 @@ def create_byo_app(
                 raise HTTPException(status_code=400, detail="Only SQL sources can be joined here")
             sql = record["sql"]
             params = {n: request.query_params.get(n) for n in bind_param_names(sql)}
-            sides.append((record["conn_url"], sql, params))
+            conn_url = _resolve_or_http(record["conn_url"], request.headers, memo)
+            sides.append((conn_url, sql, params))
         try:
             query = parse_query(request.query_params.get("_q") or "{}")
             header, rows, truncated = run_join(sides[0], sides[1], on, how, right_name or right,
@@ -410,8 +447,9 @@ def create_byo_app(
             raise HTTPException(status_code=400, detail="Only SQL sources support pushdown")
         sql = record["sql"]
         params = {name: request.query_params.get(name) for name in bind_param_names(sql)}
+        conn_url = _resolve_or_http(record["conn_url"], request.headers)
         try:
-            header, rows, _ = run_pushdown(record["conn_url"], sql, params,
+            header, rows, _ = run_pushdown(conn_url, sql, params,
                                            {"limit": 200}, 200)
         except (ReadOnlyViolation, PushdownError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
