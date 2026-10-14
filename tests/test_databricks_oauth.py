@@ -192,7 +192,6 @@ def _byo_client(tmp_path, monkeypatch, captured):
     viewer-OAuth Databricks source; SqlSource is faked to capture the conn_url."""
     from fastapi.testclient import TestClient
 
-    from cx_connectors import web
     from cx_connectors.store import Store, generate_key
     from cx_connectors.web import byo_app
 
