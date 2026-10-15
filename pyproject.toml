@@ -43,11 +43,11 @@ bigquery = ["SQLAlchemy>=2.0", "sqlalchemy-bigquery>=1.11"]
 redshift = ["SQLAlchemy>=2.0", "sqlalchemy-redshift>=0.8", "redshift-connector>=2.1"]
 # Azure Synapse is SQL Server-wire-compatible — it reuses the [mssql] extra (mssql+pyodbc).
 # Databricks reuses SqlSource via its SQLAlchemy dialect (databricks://token:<PAT>@<host>?http_path=...).
-databricks = ["SQLAlchemy>=2.0", "databricks-sql-connector[sqlalchemy]>=3.0"]
+databricks = ["SQLAlchemy>=2.0,<2.1", "databricks-sql-connector[sqlalchemy]>=3.0"]
 # "Sign in as the viewer" for a Databricks source when this app runs on Posit Connect:
 # the source stores no credential (databricks://posit-connect@<host>?...) and a fresh
 # viewer token is exchanged per request via posit-sdk. See cx_connectors.databricks_oauth.
-posit-connect = ["posit-sdk>=0.17"]
+posit-connect = ["posit-sdk>=0.17", "SQLAlchemy>=2.0,<2.1"]
 # DuckDB: in-process analytics over local/remote Parquet, CSV and Arrow files — read_parquet() with
 # predicate + projection pushdown, so a 10M-row file answers a filtered/aggregated query in ~20-50 ms
 # without ever loading the table. No connector code: SqlSource + the duckdb-engine dialect.
