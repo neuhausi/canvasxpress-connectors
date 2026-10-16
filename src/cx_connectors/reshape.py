@@ -23,6 +23,19 @@ def _is_number(value: Any) -> bool:
         return False
 
 
+def _cell(value: Any) -> Any:
+    """Coerce a raw DB cell to a JSON-serializable value.
+
+    Drivers hand back ``date``/``datetime``/``Decimal``/etc. objects that
+    ``json.dumps`` cannot encode; anything that is not already a JSON-native
+    scalar is stringified (``str(date)`` is ISO-8601), matching the preview
+    path's own value coercion.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def rows_to_cx(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> Dict[str, Any]:
     """Convert ``header`` + ``rows`` into a CanvasXpress data object.
 
@@ -37,7 +50,7 @@ def rows_to_cx(header: Sequence[str], rows: Sequence[Sequence[Any]]) -> Dict[str
     smps: List[str] = [str(r[0]) for r in rows]
     variables = [(header[c], c) for c in range(1, ncols) if numeric_col[c]]
     annotations = {
-        header[c]: [r[c] for r in rows]
+        header[c]: [_cell(r[c]) for r in rows]
         for c in range(1, ncols) if not numeric_col[c]
     }
     data = [[float(r[c]) for r in rows] for (_, c) in variables]

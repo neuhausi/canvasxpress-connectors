@@ -1,3 +1,7 @@
+import datetime
+import json
+from decimal import Decimal
+
 import pytest
 
 from cx_connectors.reshape import rows_to_cx
@@ -32,3 +36,21 @@ def test_sample_ids_coerced_to_str():
 def test_empty_rows_raises():
     with pytest.raises(ValueError):
         rows_to_cx(HEADER, [])
+
+
+def test_non_native_annotation_values_are_json_serializable():
+    # Regression: a date/datetime/Decimal column reached JSONResponse as a raw
+    # driver object and raised "type date is not JSON serializable" (e.g. a
+    # Databricks table saved as a source). Non-JSON-native cells are stringified.
+    cx = rows_to_cx(
+        ["region", "sales", "as_of", "ts"],
+        [
+            ["EMEA", Decimal("100"), datetime.date(2026, 1, 15),
+             datetime.datetime(2026, 1, 15, 9, 30)],
+            ["APAC", Decimal("200"), datetime.date(2026, 2, 1),
+             datetime.datetime(2026, 2, 1, 10, 0)],
+        ],
+    )
+    assert cx["x"]["as_of"] == ["2026-01-15", "2026-02-01"]
+    assert cx["x"]["ts"][0] == "2026-01-15 09:30:00"
+    json.dumps(cx)  # must not raise
