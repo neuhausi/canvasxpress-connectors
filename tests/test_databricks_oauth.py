@@ -200,8 +200,9 @@ def _byo_client(tmp_path, monkeypatch, captured):
             # Note: add_source also constructs this to validate read-only (no
             # read()), so capture at read() — the actual connect — not __init__.
             self.conn_url = conn_url
+            self.truncated = False
 
-        def read(self):
+        def read(self, row_cap=None):
             captured.append(self.conn_url)
             return ["a", "b"], [[1, 2]]
 

@@ -393,8 +393,13 @@ def create_byo_app(
             # is ignored. This keeps the browser unable to alter the query shape.
             declared = bind_param_names(sql)
             params = {name: request.query_params.get(name) for name in declared}
-            header, rows = SqlSource(conn_url, sql, params).read()
-            return JSONResponse(rows_to_cx(header, rows))
+            # Cap the raw read the same as pushdown/join: a saved SELECT * over a
+            # huge table would otherwise fetchall() the whole thing into memory.
+            source = SqlSource(conn_url, sql, params)
+            header, rows = source.read(row_cap=row_cap)
+            return JSONResponse(rows_to_cx(header, rows),
+                                headers={"X-Cx-Rows": str(len(rows)),
+                                         "X-Cx-Truncated": "1" if source.truncated else "0"})
         except (ReadOnlyViolation, PushdownError) as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         except ValueError as exc:

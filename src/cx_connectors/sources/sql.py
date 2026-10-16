@@ -66,17 +66,35 @@ class SqlSource:
         self.conn_url = conn_url
         self.sql = sql
         self.params = params or {}
+        # Set by read(): True when a row_cap was hit and rows were dropped.
+        self.truncated = False
 
-    def read(self) -> Tuple[Sequence[str], Sequence[Sequence[Any]]]:
+    def read(self, row_cap: Optional[int] = None) -> Tuple[Sequence[str], Sequence[Sequence[Any]]]:
+        """Run the SELECT and return ``(header, rows)``.
+
+        :param row_cap: When given, at most ``row_cap`` rows are kept and
+            ``self.truncated`` is set if the result had more. Without it every
+            row is read (``fetchall``) — a multi-million-row table (e.g. a
+            Databricks ``SELECT *`` saved source) would otherwise load entirely
+            into memory and can exhaust the process, so callers serving the
+            browser pass the same cap pushdown/join use (``CX_MAX_ROWS``).
+        """
         # Imported lazily so the core package doesn't require SQLAlchemy.
         from sqlalchemy import create_engine, text
 
+        self.truncated = False
         engine = create_engine(self.conn_url, future=True)
         try:
             with engine.connect() as conn:
                 result = conn.execute(text(self.sql), self.params)
                 header: List[str] = list(result.keys())
-                rows = [list(r) for r in result.fetchall()]
+                if row_cap is None:
+                    rows = [list(r) for r in result.fetchall()]
+                else:
+                    # Ask for one past the cap so truncation is detectable, then drop it.
+                    fetched = result.fetchmany(row_cap + 1)
+                    self.truncated = len(fetched) > row_cap
+                    rows = [list(r) for r in fetched[:row_cap]]
         finally:
             engine.dispose()
         return header, rows

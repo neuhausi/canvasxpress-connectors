@@ -215,6 +215,31 @@ def test_sql_source_end_to_end(tmp_path):
     assert cx["x"]["grp"] == ["X", "Y"]
 
 
+def test_sql_source_row_cap_truncates_and_reports(tmp_path):
+    path = str(tmp_path / "big.db")
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE t (sample TEXT, v INT)")
+    conn.executemany("INSERT INTO t VALUES (?,?)", [("s%d" % i, i) for i in range(10)])
+    conn.commit()
+    conn.close()
+
+    src = SqlSource("sqlite:///" + path, "SELECT sample, v FROM t ORDER BY v")
+    header, rows = src.read(row_cap=4)
+    assert len(rows) == 4                 # capped, not all 10
+    assert src.truncated is True
+    assert [r[0] for r in rows] == ["s0", "s1", "s2", "s3"]
+
+    # Cap at/above the row count does not report truncation.
+    header, rows = src.read(row_cap=10)
+    assert len(rows) == 10
+    assert src.truncated is False
+
+    # No cap keeps every row (back-compatible default).
+    header, rows = src.read()
+    assert len(rows) == 10
+    assert src.truncated is False
+
+
 def test_bind_param_names_extracts_declared_binds():
     from cx_connectors.sources.sql import bind_param_names
     sql = ("SELECT sample, v FROM t "
