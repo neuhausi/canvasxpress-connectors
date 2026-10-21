@@ -377,6 +377,11 @@ written `type="rds"` is R-native and not readable by Python `pins` — use `type
 `"parquet"` for cross-language boards. Credentials in the config are held server-side and stored
 encrypted, exactly like a connection string.
 
+For a **live dashboard** built on this source, see the **Pins Board (live connector)** example in
+[canvasxpress-dashboards](https://github.com/neuhausi/canvasxpress-dashboards) and its
+[`docs/pins-connector.md`](https://github.com/neuhausi/canvasxpress-dashboards/blob/main/docs/pins-connector.md):
+a pin bound to a dashboard panel, read live through this connector.
+
 ### Registering SaaS sources through the web app
 
 The BYO web app (`create_byo_app` / the `/connectors` demo) registers these too, not just
