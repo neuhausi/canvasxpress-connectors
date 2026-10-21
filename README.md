@@ -349,22 +349,24 @@ live dashboard source with no export step. Four backends, matching the `pins` co
 
 ```bash
 pip install "canvasxpress-connectors[pins]"      # Connect / folder / URL boards
-pip install "canvasxpress-connectors[pins-s3]"   # + board_s3 (needs AWS creds in env)
+pip install "canvasxpress-connectors[pins-s3]"   # + board_s3 (AWS creds in the source config)
 ```
 
 ```python
 from cx_connectors.sources import PinsBoardSource
 from cx_connectors.sources.base import to_cx
 
-# Posit Connect — server_url/api_key, or the CONNECT_SERVER / CONNECT_API_KEY env (as board_connect())
+# Posit Connect — server_url + api_key are BOTH required (no CONNECT_SERVER/CONNECT_API_KEY fallback)
 data = to_cx(PinsBoardSource("connect", "hadley/sales-summary",
                              {"server_url": "https://connect.example.com", "api_key": "…"}))
 
-# Local / mounted folder
-data = to_cx(PinsBoardSource("folder", "mtcars_data", {"path": "~/Dropbox/my-pins"}))
+# Local / mounted folder — only under a CXC_PINS_FOLDER_ROOTS allowlisted root (see below)
+data = to_cx(PinsBoardSource("folder", "mtcars_data", {"path": "/srv/pins/my-pins"}))
 
-# S3 bucket (region + any storage option)
-data = to_cx(PinsBoardSource("s3", "model-metrics", {"path": "my-bucket", "region": "us-east-1"}))
+# S3 bucket (region + any storage option; needs config credentials unless the operator opts in)
+data = to_cx(PinsBoardSource("s3", "model-metrics",
+                             {"path": "my-bucket", "region": "us-east-1",
+                              "key": "AKIA…", "secret": "…"}))
 
 # Read-only board over HTTP(S): board root + the pin's versioned sub-path
 data = to_cx(PinsBoardSource("url", "penguins",
@@ -376,6 +378,17 @@ Only a **data-frame** pin can become a chart; a model/plot/scalar pin raises a c
 written `type="rds"` is R-native and not readable by Python `pins` — use `type="csv"`/`"arrow"`/
 `"parquet"` for cross-language boards. Credentials in the config are held server-side and stored
 encrypted, exactly like a connection string.
+
+**Server credentials are never borrowed for a user-registered source.** A user registering a
+source must not be able to read whatever the *server process* can reach, so each backend is
+locked down (enforced at both registration and read time, so a source stored before this policy
+cannot keep using server credentials):
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| *(none)* — `connect` board | — | `server_url` **and** `api_key` are required; the server's `CONNECT_SERVER` / `CONNECT_API_KEY` environment is never used as a fallback (on Posit Connect it carries the content owner's identity). |
+| `CXC_PINS_FOLDER_ROOTS` | unset ⇒ **folder boards disabled** | `os.pathsep`-separated allowlist of roots (e.g. `/srv/pins:/data/pins`). A folder board's `path` is resolved with `realpath` and must sit inside an allowed root — which also blocks `..` and symlink escapes. |
+| `CXC_PINS_S3_SERVER_CREDENTIALS` | `off` | When `on`, an `s3` board with no credentials in its config may use the server's ambient AWS credentials. Off ⇒ the config must carry its own credentials. |
 
 For a **live dashboard** built on this source, see the **Pins Board (live connector)** example in
 [canvasxpress-dashboards](https://github.com/neuhausi/canvasxpress-dashboards) and its
