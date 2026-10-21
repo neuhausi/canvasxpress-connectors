@@ -166,7 +166,8 @@ class PinsBoardSource:
             if not has_creds and not _s3_server_creds_allowed():
                 raise ValueError(
                     "A pins S3 board requires credentials in its config unless the operator "
-                    "sets %s=on to allow the server's ambient AWS credentials." % _S3_SERVER_CREDS_ENV)
+                    "sets %s=on to allow the server's ambient AWS credentials."
+                    % _S3_SERVER_CREDS_ENV)
             return ""
         return ""
 

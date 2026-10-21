@@ -117,7 +117,8 @@ def test_folder_symlink_escape_refused(tmp_path, monkeypatch):
 def test_s3_refused_without_optin_or_config_creds(monkeypatch):
     monkeypatch.delenv("CXC_PINS_S3_SERVER_CREDENTIALS", raising=False)
     with pytest.raises(ValueError):
-        PinsBoardSource("s3", "metrics", {"path": "bucket", "region": "us-east-1"})._require_params()
+        PinsBoardSource("s3", "metrics",
+                        {"path": "bucket", "region": "us-east-1"})._require_params()
 
 
 def test_s3_allowed_with_config_creds(monkeypatch):
