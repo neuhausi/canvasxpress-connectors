@@ -25,6 +25,7 @@ pip install "canvasxpress-connectors[sheets]"  # + Google Sheets
 pip install "canvasxpress-connectors[analytics]" # + Google Analytics 4 (GA4)
 pip install "canvasxpress-connectors[salesforce]" # + Salesforce (SOQL)
 pip install "canvasxpress-connectors[servicenow]" # + ServiceNow (Table API)
+pip install "canvasxpress-connectors[pins]"       # + Posit pins boards (Connect / folder / URL)
 pip install "canvasxpress-connectors[all]"     # everything incl. the web app
 ```
 
@@ -50,7 +51,7 @@ Return `data` as JSON from an endpoint; the page does `new CanvasXpress("cx", da
 | Layer | Module | Job |
 |-------|--------|-----|
 | Reshape | `cx_connectors.reshape` | rows → CanvasXpress `{y, x}` (core, no heavy deps) |
-| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource` |
+| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource`, `PinsBoardSource` |
 | Live | `cx_connectors.sources` | `LiveSource` protocol (`poll()` → a `pushData` tick) + `SimulatedLiveSource`; streamed over SSE by `cx_connectors.web.sse` |
 | Store | `cx_connectors.store` | users (PBKDF2) + per-user **encrypted** connection strings |
 | Web | `cx_connectors.web` | `create_byo_app()` (databases + Salesforce/ServiceNow, login, live SSE streams: **`GET /api/streams`** lists them, **`GET /api/stream/<name>`** streams one; register your own with `live_streams=`) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
@@ -232,7 +233,8 @@ on Connect. It has no credential of its own, so it cannot be read outside Connec
 
 ## Non-SQL sources (REST / SaaS APIs)
 
-Not every source is a database. SaaS APIs (Google Analytics, Salesforce, ServiceNow, …) have
+Not every source is a database. SaaS APIs (Google Analytics, Salesforce, ServiceNow, …) and
+object stores like Posit **pins** boards have
 **no SQLAlchemy dialect**, so `SqlSource` can't reach them — but the `DataSource` seam is exactly
 for this: a source's only job is to return `(header, rows)`, so each API is one small class and
 nothing downstream changes. Google Analytics 4, Salesforce, and ServiceNow ship built-in.
@@ -338,15 +340,53 @@ data = to_cx(ServiceNowSource(instance="acme", table="incident",
                               fields=["number", "priority"], oauth_token=token))
 ```
 
+### Posit pins boards
+
+`PinsBoardSource` reads a pinned dataset from a [**pins**](https://posit-dev.github.io/pins-python/)
+board — the boards an analyst publishes to with `pin_write()`. A pin written from **R or Python**
+reads the same here (the Python `pins` package is cross-compatible), so a shared board becomes a
+live dashboard source with no export step. Four backends, matching the `pins` constructors:
+
+```bash
+pip install "canvasxpress-connectors[pins]"      # Connect / folder / URL boards
+pip install "canvasxpress-connectors[pins-s3]"   # + board_s3 (needs AWS creds in env)
+```
+
+```python
+from cx_connectors.sources import PinsBoardSource
+from cx_connectors.sources.base import to_cx
+
+# Posit Connect — server_url/api_key, or the CONNECT_SERVER / CONNECT_API_KEY env (as board_connect())
+data = to_cx(PinsBoardSource("connect", "hadley/sales-summary",
+                             {"server_url": "https://connect.example.com", "api_key": "…"}))
+
+# Local / mounted folder
+data = to_cx(PinsBoardSource("folder", "mtcars_data", {"path": "~/Dropbox/my-pins"}))
+
+# S3 bucket (region + any storage option)
+data = to_cx(PinsBoardSource("s3", "model-metrics", {"path": "my-bucket", "region": "us-east-1"}))
+
+# Read-only board over HTTP(S): board root + the pin's versioned sub-path
+data = to_cx(PinsBoardSource("url", "penguins",
+                             {"url": "https://user.github.io/pins-board/",
+                              "path": "penguins/20240101T000000Z-abcd/"}))
+```
+
+Only a **data-frame** pin can become a chart; a model/plot/scalar pin raises a clear error. A pin
+written `type="rds"` is R-native and not readable by Python `pins` — use `type="csv"`/`"arrow"`/
+`"parquet"` for cross-language boards. Credentials in the config are held server-side and stored
+encrypted, exactly like a connection string.
+
 ### Registering SaaS sources through the web app
 
 The BYO web app (`create_byo_app` / the `/connectors` demo) registers these too, not just
 databases. The **Type** selector on the register-source form switches between *SQL database*,
-*Salesforce (SOQL)*, and *ServiceNow (Table API)*; ServiceNow offers **Basic** or **OAuth 2.0**
-auth. Credentials are stored **encrypted** exactly like a connection string — for ServiceNow
-OAuth, the refresh/password credentials are stored and a bearer token is minted per request. The
-`POST /api/sources` body carries `kind` (`"salesforce"`/`"servicenow"`) plus an `auth` object;
-`GET /api/data?source=<name>` then runs the SOQL query / Table API read and reshapes it.
+*Salesforce (SOQL)*, *ServiceNow (Table API)*, and *Pins board*; ServiceNow offers **Basic** or
+**OAuth 2.0** auth. Credentials are stored **encrypted** exactly like a connection string — for
+ServiceNow OAuth, the refresh/password credentials are stored and a bearer token is minted per
+request. The `POST /api/sources` body carries `kind` (`"salesforce"`/`"servicenow"`/`"pins"`) plus
+its config (an `auth` object, or for pins a `board_type` + `pin` + `config`); `GET /api/data?source=<name>`
+then runs the SOQL query / Table API read / pin read and reshapes it.
 
 ## Parameterized queries (live-data controls)
 

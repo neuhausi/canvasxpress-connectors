@@ -61,6 +61,10 @@ yahoo = ["requests>=2.31"]                                         # Yahoo Finan
 stooq = ["requests>=2.31"]                                         # Stooq keyless EOD prices (OptionsWall)
 alphavantage = ["requests>=2.31"]                                  # Alpha Vantage prices + historical options (OptionsWall)
 nasdaq = ["requests>=2.31"]                                        # Nasdaq keyless option chain (OptionsWall)
+# Posit pins boards — read a pinned dataset written from R or Python. Base [pins]
+# covers Connect / folder / URL boards; [pins-s3] adds the S3 filesystem.
+pins = ["pins>=0.8", "requests>=2.31", "aiohttp>=3.9"]             # Connect / folder / URL boards
+pins-s3 = ["pins>=0.8", "s3fs>=2023.1"]                            # + board_s3 (needs AWS creds in env)
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "itsdangerous>=2.1", "python-dotenv>=1.0"]
 all = [
     "SQLAlchemy>=2.0",

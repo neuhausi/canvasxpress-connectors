@@ -52,6 +52,7 @@
           <option value="sql">SQL database</option>
           <option value="salesforce">Salesforce (SOQL)</option>
           <option value="servicenow">ServiceNow (Table API)</option>
+          <option value="pins">Pins board</option>
         </select>
       </div>
 
@@ -98,6 +99,26 @@
           <div class="row"><label>Refresh tok.</label><input id="snRefresh" type="password" autocomplete="off"
                placeholder="(optional; else password grant)"></div>
         </div>
+      </div>
+
+      <!-- Pins board -->
+      <div id="grpPin" class="hidden">
+        <div class="row"><label>Board</label>
+          <select id="pinBoard">
+            <option value="connect">Posit Connect</option>
+            <option value="folder">Folder</option>
+            <option value="s3">S3</option>
+            <option value="url">URL (read-only)</option>
+          </select>
+        </div>
+        <div class="row"><label>Pin</label><input id="pinName" type="text" placeholder="owner/name  ·  mtcars_data"></div>
+        <div id="pinConnect"><div class="row"><label>Server URL</label><input id="pinServer" type="text" placeholder="https://connect.example.com (or CONNECT_SERVER env)"></div>
+          <div class="row"><label>API key</label><input id="pinKey" type="password" autocomplete="off" placeholder="(or CONNECT_API_KEY env)"></div></div>
+        <div id="pinFolder" class="hidden"><div class="row"><label>Path</label><input id="pinPath" type="text" placeholder="~/Dropbox/my-pins"></div></div>
+        <div id="pinS3" class="hidden"><div class="row"><label>Bucket</label><input id="pinBucket" type="text" placeholder="my-bucket"></div>
+          <div class="row"><label>Region</label><input id="pinRegion" type="text" placeholder="us-east-1"></div></div>
+        <div id="pinUrl" class="hidden"><div class="row"><label>Board URL</label><input id="pinUrlRoot" type="text" placeholder="https://user.github.io/pins-board/"></div>
+          <div class="row"><label>Version path</label><input id="pinUrlPath" type="text" placeholder="penguins/20240101T000000Z-abcd/"></div></div>
       </div>
 
       <div class="row"><button id="addSource">Save source</button></div>
@@ -176,14 +197,24 @@
       document.getElementById("grpSql").classList.toggle("hidden", kind !== "sql");
       document.getElementById("grpSf").classList.toggle("hidden", kind !== "salesforce");
       document.getElementById("grpSn").classList.toggle("hidden", kind !== "servicenow");
+      document.getElementById("grpPin").classList.toggle("hidden", kind !== "pins");
     }
     function syncSnAuth() {
       document.getElementById("snOauth").classList.toggle(
         "hidden", document.getElementById("snAuth").value !== "oauth");
     }
+    // Show only the parameters for the selected pins board backend.
+    function syncPinBoard() {
+      var board = document.getElementById("pinBoard").value;
+      document.getElementById("pinConnect").classList.toggle("hidden", board !== "connect");
+      document.getElementById("pinFolder").classList.toggle("hidden", board !== "folder");
+      document.getElementById("pinS3").classList.toggle("hidden", board !== "s3");
+      document.getElementById("pinUrl").classList.toggle("hidden", board !== "url");
+    }
     document.getElementById("sKind").addEventListener("change", syncKind);
     document.getElementById("snAuth").addEventListener("change", syncSnAuth);
-    syncKind(); syncSnAuth();
+    document.getElementById("pinBoard").addEventListener("change", syncPinBoard);
+    syncKind(); syncSnAuth(); syncPinBoard();
 
     function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -202,6 +233,15 @@
           : { type: "basic", username: val("snUser"), password: val("snPass") };
         return { name: val("sName"), kind: kind, instance: val("snInst"), table: val("snTable"),
           query: val("snQuery"), fields: val("snFields"), limit: val("snLimit"), auth: auth };
+      }
+      if (kind === "pins") {
+        var board = document.getElementById("pinBoard").value;
+        var config = {};
+        if (board === "connect") { config = { server_url: val("pinServer"), api_key: val("pinKey") }; }
+        else if (board === "folder") { config = { path: val("pinPath") }; }
+        else if (board === "s3") { config = { path: val("pinBucket"), region: val("pinRegion") }; }
+        else if (board === "url") { config = { url: val("pinUrlRoot"), path: val("pinUrlPath") }; }
+        return { name: val("sName"), kind: kind, board_type: board, pin: val("pinName"), config: config };
       }
       return { name: val("sName"), kind: "sql", conn_url: val("sConn"), sql: val("sSql") };
     }

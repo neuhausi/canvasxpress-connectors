@@ -7,7 +7,7 @@ __all__ = ["DataSource", "LiveSource", "Tick", "format_sse", "to_cx",
            "GoogleAnalyticsSource", "SalesforceSource", "ServiceNowSource",
            "YahooFinanceSource", "YahooOptionsSource", "StooqSource",
            "AlphaVantageSource", "AlphaVantageOptionsSource", "NasdaqOptionsSource",
-           "PackedMatrixSource", "SimulatedLiveSource"]
+           "PackedMatrixSource", "SimulatedLiveSource", "PinsBoardSource"]
 
 
 def __getattr__(name):
@@ -52,4 +52,7 @@ def __getattr__(name):
     if name == "NasdaqOptionsSource":
         from .nasdaq import NasdaqOptionsSource
         return NasdaqOptionsSource
+    if name == "PinsBoardSource":
+        from .pins_board import PinsBoardSource
+        return PinsBoardSource
     raise AttributeError(name)

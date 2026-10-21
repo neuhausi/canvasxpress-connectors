@@ -32,6 +32,8 @@ from ..databricks_oauth import (
 from ..pushdown import PushdownError, parse_query, run_join, run_pushdown
 from ..reshape import rows_to_cx
 from ..sources.packed import PackedMatrixSource
+from ..sources.pins_board import BOARD_TYPES as PINS_BOARD_TYPES
+from ..sources.pins_board import PinsBoardSource
 from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
 from ..sources.salesforce import SalesforceSource
 from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
@@ -139,20 +141,53 @@ def _servicenow_config_from_body(body: dict) -> dict:
     }
 
 
+def _pins_config_from_body(body: dict) -> dict:
+    """Normalize a pins-board registration body into the stored (encrypted) config.
+
+    The stored blob carries the board backend, the pin name, and the per-backend
+    parameters (a Connect ``api_key``, an S3 ``region``, a URL version ``path``, …), which
+    may include credentials — so it lives in the encrypted ``conn_enc`` column like the
+    other SaaS sources, never in plain config.
+
+    :param body: The POST body from the register-source form.
+    :returns: The config dict to JSON-encode into ``conn_enc``.
+    :raises HTTPException: If the board type is unknown or a required field is missing.
+    """
+    board_type = (body.get("board_type") or "").strip().lower()
+    if board_type not in PINS_BOARD_TYPES:
+        raise HTTPException(status_code=400,
+                            detail="board_type must be one of %s" % ", ".join(PINS_BOARD_TYPES))
+    pin = (body.get("pin") or body.get("pin_name") or "").strip()
+    if not pin:
+        raise HTTPException(status_code=400, detail="pin (name) is required")
+    board_cfg = dict(body.get("config") or {})
+    # Validate required per-backend params up front (clear 400, not a later 502).
+    try:
+        PinsBoardSource(board_type, pin, board_cfg)._require_params()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"board_type": board_type, "pin": pin, "config": board_cfg}
+
+
 def _read_saas_source(record: dict):
-    """Build the Salesforce/ServiceNow source for a stored record and read it.
+    """Build the Salesforce / ServiceNow / pins source for a stored record and read it.
 
     The record's ``conn_url`` holds the decrypted JSON auth/query blob. For ServiceNow with
     OAuth, a short-lived bearer token is minted per read; the password/refresh credentials are
     what's stored, never the access token.
 
-    :param record: A ``store.get_source`` record with ``kind`` ``"salesforce"``/``"servicenow"``.
+    :param record: A ``store.get_source`` record with ``kind`` ``"salesforce"`` /
+        ``"servicenow"`` / ``"pins"``.
     :returns: ``(header, rows)`` from the source's ``read()``.
     """
     kind = record.get("kind")
     if kind == "salesforce":
         auth = json.loads(record["conn_url"]) if record["conn_url"] else {}
         return SalesforceSource(record["sql"], **auth).read()
+
+    if kind == "pins":
+        cfg = json.loads(record["conn_url"]) if record["conn_url"] else {}
+        return PinsBoardSource(cfg["board_type"], cfg["pin"], cfg.get("config")).read()
 
     cfg = json.loads(record["conn_url"]) if record["conn_url"] else {}
     auth = cfg.pop("auth", {}) or {}
@@ -315,6 +350,11 @@ def create_byo_app(
             store.save_source(user, name, json.dumps(cfg), "", kind="servicenow")
             return {"sources": store.list_sources(user)}
 
+        if kind == "pins":
+            cfg = _pins_config_from_body(body)
+            store.save_source(user, name, json.dumps(cfg), "", kind="pins")
+            return {"sources": store.list_sources(user)}
+
         # Default: a plain SQL SELECT source.
         conn_url = (body.get("conn_url") or "").strip()
         sql = (body.get("sql") or "").strip()
@@ -344,7 +384,7 @@ def create_byo_app(
         # BEFORE the generic `except -> 502` below, so a missing-viewer 403 or a
         # token-exchange error surfaces its real cause. SaaS sources (salesforce /
         # servicenow) keep a JSON blob in `conn_url`, not a DB URL — never resolve it.
-        conn_url = (record["conn_url"] if record.get("kind") in ("salesforce", "servicenow")
+        conn_url = (record["conn_url"] if record.get("kind") in ("salesforce", "servicenow", "pins")
                     else _resolve_or_http(record["conn_url"], request.headers))
         try:
             # A 'packed' source reassembles a column-store matrix (CCLE/TCGA
@@ -367,8 +407,8 @@ def create_byo_app(
                 )
                 return JSONResponse(src.read_cx())
 
-            # SaaS/REST sources: run the SOQL query / Table API read and reshape.
-            if record.get("kind") in ("salesforce", "servicenow"):
+            # SaaS/REST sources: run the SOQL query / Table API / pin read and reshape.
+            if record.get("kind") in ("salesforce", "servicenow", "pins"):
                 header, rows = _read_saas_source(record)
                 return JSONResponse(rows_to_cx(header, rows))
 
