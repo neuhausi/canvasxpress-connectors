@@ -179,7 +179,8 @@ def _pins_config_from_body(body: dict) -> dict:
 _SF_APPS_ENV = "CXC_SALESFORCE_APPS"
 _SF_PASSWORD_AUTH_ENV = "CXC_SALESFORCE_PASSWORD_AUTH"
 _SF_TOKEN_TTL = 600.0          # seconds a minted token is reused; Salesforce sessions last longer
-_SF_TOKENS: dict = {}          # (domain, client_id) -> (expires_at, {"access_token", "instance_url"})
+# (domain, client_id) -> (expires_at, {"access_token", "instance_url"})
+_SF_TOKENS: dict = {}
 
 
 def _salesforce_apps() -> dict:
@@ -201,7 +202,10 @@ def _salesforce_apps() -> dict:
 
 
 def _salesforce_app_allows(app: dict, user: str) -> bool:
-    """Whether ``user`` may use ``app``: only when ``users`` lists them (or ``"*"``). Deny by default."""
+    """Whether ``user`` may use ``app``.
+
+    Only when ``users`` lists them (or is ``"*"``); an app with no ``users`` allows nobody.
+    """
     users = app.get("users")
     if isinstance(users, str):
         users = [users]
@@ -221,13 +225,15 @@ def _salesforce_app_for(user: str, name: str) -> dict:
     if app is None or not _salesforce_app_allows(app, user):
         raise PermissionError("Salesforce OAuth app %r is not available to this user" % name)
     if not (app.get("domain") and app.get("client_id") and app.get("client_secret")):
-        raise RuntimeError("Salesforce OAuth app %r needs domain, client_id and client_secret" % name)
+        raise RuntimeError(
+            "Salesforce OAuth app %r needs domain, client_id and client_secret" % name)
     return app
 
 
 def _salesforce_password_auth_allowed() -> bool:
     """Whether sources may be registered with a stored username/password/token (default yes)."""
-    return (os.getenv(_SF_PASSWORD_AUTH_ENV) or "on").strip().lower() not in ("off", "0", "false", "no")
+    setting = (os.getenv(_SF_PASSWORD_AUTH_ENV) or "on").strip().lower()
+    return setting not in ("off", "0", "false", "no")
 
 
 def _salesforce_token(app: dict, fresh: bool = False) -> dict:
@@ -300,7 +306,8 @@ def _read_saas_source(record: dict, owner: Optional[str] = None):
                 app = _salesforce_apps().get(auth["oauth_app"])
                 if not app or not (app.get("domain") and app.get("client_id")
                                    and app.get("client_secret")):
-                    raise RuntimeError("Salesforce OAuth app %r is not configured" % auth["oauth_app"])
+                    raise RuntimeError(
+                        "Salesforce OAuth app %r is not configured" % auth["oauth_app"])
             return _read_salesforce_oauth(record["sql"], app)
         return SalesforceSource(record["sql"], **auth).read()
 
@@ -519,7 +526,8 @@ def create_byo_app(
             # (``secret_from``) — always one of THIS user's own — and only while the server
             # is unchanged, so the secret cannot be redirected somewhere new.
             original = store.get_source(user, (body.get("secret_from") or "").strip() or name)
-            stored = original["conn_url"] if original and (original.get("kind") or "sql") == "sql" else None
+            is_sql = bool(original) and (original.get("kind") or "sql") == "sql"
+            stored = original["conn_url"] if is_sql else None
             try:
                 conn_url = unmask_conn_url(conn_url, stored)
             except ValueError as exc:

@@ -42,7 +42,8 @@ def assert_read_only(soql: str) -> None:
 # A My Domain name as it appears before ".salesforce.com" ("acme.my", "acme-dev-ed.develop.my",
 # "login"). Restricting it to host characters keeps a configured value from steering the token
 # request anywhere but a *.salesforce.com host.
-_DOMAIN_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$")
+_LABEL = r"[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?"
+_DOMAIN_RE = re.compile(r"^" + _LABEL + r"(\." + _LABEL + r")*$")
 
 
 def salesforce_oauth_token(domain: str, client_id: str, client_secret: str,

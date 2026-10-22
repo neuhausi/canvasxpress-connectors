@@ -40,8 +40,11 @@ class _Session:
 
 # ---- token helper -------------------------------------------------------------------------
 
+
 def test_token_helper_posts_client_credentials_to_the_my_domain_host():
-    session = _Session(_Response(200, {"access_token": "tok", "instance_url": "https://acme.my.salesforce.com"}))
+    session = _Session(
+        _Response(200, {"access_token": "tok", "instance_url": "https://acme.my.salesforce.com"})
+    )
     token = salesforce_oauth_token("acme.my", "cid", SECRET, session=session)
     assert token == {"access_token": "tok", "instance_url": "https://acme.my.salesforce.com"}
     url, form = session.calls[0]
@@ -56,15 +59,25 @@ def test_token_helper_accepts_a_full_salesforce_host():
     assert token["instance_url"] == "https://acme.my.salesforce.com"
 
 
-@pytest.mark.parametrize("domain", [
-    "evil.example/x", "acme.my@evil.example", "https://acme.my", "a b", "", "-acme", "acme..my",
-    "acme.my:8443", "acme.my/../x",
-])
+@pytest.mark.parametrize(
+    "domain",
+    [
+        "evil.example/x",
+        "acme.my@evil.example",
+        "https://acme.my",
+        "a b",
+        "",
+        "-acme",
+        "acme..my",
+        "acme.my:8443",
+        "acme.my/../x",
+    ],
+)
 def test_token_helper_rejects_a_domain_that_is_not_a_plain_host(domain):
     session = _Session(_Response(200, {"access_token": "tok"}))
     with pytest.raises(ValueError):
         salesforce_oauth_token(domain, "cid", SECRET, session=session)
-    assert session.calls == []          # nothing was sent anywhere
+    assert session.calls == []  # nothing was sent anywhere
 
 
 def test_token_helper_requires_both_credentials():
@@ -76,7 +89,11 @@ def test_token_helper_requires_both_credentials():
 
 
 def test_token_helper_reports_salesforces_reason_without_the_secret():
-    session = _Session(_Response(400, {"error": "invalid_client", "error_description": "invalid client credentials"}))
+    session = _Session(
+        _Response(
+            400, {"error": "invalid_client", "error_description": "invalid client credentials"}
+        )
+    )
     with pytest.raises(SalesforceOAuthError) as caught:
         salesforce_oauth_token("acme.my", "cid", SECRET, session=session)
     assert "invalid client credentials" in str(caught.value)
@@ -94,18 +111,26 @@ def test_token_helper_survives_an_html_error_page():
 
 
 def test_token_helper_refuses_an_instance_url_outside_salesforce():
-    session = _Session(_Response(200, {"access_token": "tok", "instance_url": "https://evil.example"}))
+    session = _Session(
+        _Response(200, {"access_token": "tok", "instance_url": "https://evil.example"})
+    )
     with pytest.raises(SalesforceOAuthError):
         salesforce_oauth_token("acme.my", "cid", SECRET, session=session)
-    insecure = _Session(_Response(200, {"access_token": "tok", "instance_url": "http://acme.my.salesforce.com"}))
+    insecure = _Session(
+        _Response(200, {"access_token": "tok", "instance_url": "http://acme.my.salesforce.com"})
+    )
     with pytest.raises(SalesforceOAuthError):
         salesforce_oauth_token("acme.my", "cid", SECRET, session=insecure)
 
 
 # ---- web app ------------------------------------------------------------------------------
 
+
 def _app(name="alice", **settings):
-    return dict({"domain": "acme.my", "client_id": "cid", "client_secret": SECRET, "users": [name]}, **settings)
+    return dict(
+        {"domain": "acme.my", "client_id": "cid", "client_secret": SECRET, "users": [name]},
+        **settings,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +144,9 @@ def _client(tmp_path, monkeypatch, apps=None, password_auth=None):
     from fastapi.testclient import TestClient
 
     if apps is not None:
-        monkeypatch.setenv("CXC_SALESFORCE_APPS", apps if isinstance(apps, str) else json.dumps(apps))
+        monkeypatch.setenv(
+            "CXC_SALESFORCE_APPS", apps if isinstance(apps, str) else json.dumps(apps)
+        )
     else:
         monkeypatch.delenv("CXC_SALESFORCE_APPS", raising=False)
     if password_auth is None:
@@ -128,10 +155,14 @@ def _client(tmp_path, monkeypatch, apps=None, password_auth=None):
         monkeypatch.setenv("CXC_SALESFORCE_PASSWORD_AUTH", password_auth)
     store = Store(str(tmp_path / "app.db"), generate_key())
     store.create_user("alice", "secret1")
-    app = byo.create_byo_app(store=store, session_secret="test",
-                             encryption_key=generate_key(), serve_static=False)
+    app = byo.create_byo_app(
+        store=store, session_secret="test", encryption_key=generate_key(), serve_static=False
+    )
     client = TestClient(app)
-    assert client.post("/auth/login", json={"username": "alice", "password": "secret1"}).status_code == 200
+    assert (
+        client.post("/auth/login", json={"username": "alice", "password": "secret1"}).status_code
+        == 200
+    )
     return client, store
 
 
@@ -139,8 +170,12 @@ SOQL = "SELECT Name, Amount FROM Opportunity"
 
 
 def _register(client, app_name="default", name="opps", **extra):
-    return client.post("/api/sources", json=dict(
-        {"name": name, "kind": "salesforce", "soql": SOQL, "oauth_app": app_name}, **extra))
+    return client.post(
+        "/api/sources",
+        json=dict(
+            {"name": name, "kind": "salesforce", "soql": SOQL, "oauth_app": app_name}, **extra
+        ),
+    )
 
 
 def test_register_stores_only_the_app_name(tmp_path, monkeypatch):
@@ -159,12 +194,17 @@ def test_register_rejects_oauth_app_together_with_credentials(tmp_path, monkeypa
     assert store.get_source("alice", "opps") is None
 
 
-@pytest.mark.parametrize("apps", [
-    {},                                                         # nothing configured
-    {"default": _app("bob")},                                   # listed for someone else
-    {"default": {k: v for k, v in _app().items() if k != "users"}},   # no users list: deny by default
-    {"default": _app(users=[])},                                # empty list
-])
+@pytest.mark.parametrize(
+    "apps",
+    [
+        {},  # nothing configured
+        {"default": _app("bob")},  # listed for someone else
+        {
+            "default": {k: v for k, v in _app().items() if k != "users"}
+        },  # no users list: deny by default
+        {"default": _app(users=[])},  # empty list
+    ],
+)
 def test_register_is_denied_unless_the_user_is_listed(tmp_path, monkeypatch, apps):
     client, store = _client(tmp_path, monkeypatch, apps)
     response = _register(client)
@@ -182,7 +222,9 @@ def test_unknown_and_forbidden_apps_look_the_same(tmp_path, monkeypatch):
     unknown = _register(client, "nope")
     forbidden = _register(client, "private")
     assert unknown.status_code == forbidden.status_code == 403
-    assert unknown.json()["detail"].replace("'nope'", "X") == forbidden.json()["detail"].replace("'private'", "X")
+    assert unknown.json()["detail"].replace("'nope'", "X") == forbidden.json()["detail"].replace(
+        "'private'", "X"
+    )
 
 
 def test_malformed_app_config_is_reported_without_echoing_it(tmp_path, monkeypatch):
@@ -201,12 +243,19 @@ def test_incomplete_app_is_a_configuration_error(tmp_path, monkeypatch):
 
 
 def test_apps_endpoint_lists_names_only(tmp_path, monkeypatch):
-    client, _ = _client(tmp_path, monkeypatch, {
-        "zeta": _app(users="*"), "alpha": _app("alice"), "hidden": _app("bob")})
+    client, _ = _client(
+        tmp_path,
+        monkeypatch,
+        {"zeta": _app(users="*"), "alpha": _app("alice"), "hidden": _app("bob")},
+    )
     response = client.get("/api/salesforce/apps")
     assert response.status_code == 200
     assert response.json() == {"apps": ["alpha", "zeta"], "password_auth": True}
-    assert SECRET not in response.text and "cid" not in response.text and "acme.my" not in response.text
+    assert (
+        SECRET not in response.text
+        and "cid" not in response.text
+        and "acme.my" not in response.text
+    )
 
 
 def test_apps_endpoint_requires_login(tmp_path, monkeypatch):
@@ -217,23 +266,38 @@ def test_apps_endpoint_requires_login(tmp_path, monkeypatch):
 
 def test_password_auth_can_be_switched_off(tmp_path, monkeypatch):
     client, store = _client(tmp_path, monkeypatch, {"default": _app()}, password_auth="off")
-    refused = client.post("/api/sources", json={
-        "name": "legacy", "kind": "salesforce", "soql": SOQL, "auth": {"username": "u", "password": "p"}})
+    refused = client.post(
+        "/api/sources",
+        json={
+            "name": "legacy",
+            "kind": "salesforce",
+            "soql": SOQL,
+            "auth": {"username": "u", "password": "p"},
+        },
+    )
     assert refused.status_code == 403
     assert store.get_source("alice", "legacy") is None
-    assert _register(client).status_code == 200                      # OAuth still works
+    assert _register(client).status_code == 200  # OAuth still works
     assert client.get("/api/salesforce/apps").json()["password_auth"] is False
 
 
 def test_password_auth_still_works_by_default(tmp_path, monkeypatch):
     client, store = _client(tmp_path, monkeypatch, {})
-    response = client.post("/api/sources", json={
-        "name": "legacy", "kind": "salesforce", "soql": SOQL, "auth": {"username": "u", "password": "p"}})
+    response = client.post(
+        "/api/sources",
+        json={
+            "name": "legacy",
+            "kind": "salesforce",
+            "soql": SOQL,
+            "auth": {"username": "u", "password": "p"},
+        },
+    )
     assert response.status_code == 200
     assert '"password": "p"' in store.get_source("alice", "legacy")["conn_url"]
 
 
 # ---- reading ------------------------------------------------------------------------------
+
 
 class _Mint:
     """Stand-in for salesforce_oauth_token that counts calls and hands out distinct tokens."""
@@ -243,7 +307,10 @@ class _Mint:
 
     def __call__(self, domain, client_id, client_secret, **kwargs):
         self.calls.append((domain, client_id, client_secret))
-        return {"access_token": "tok%d" % len(self.calls), "instance_url": "https://acme.my.salesforce.com"}
+        return {
+            "access_token": "tok%d" % len(self.calls),
+            "instance_url": "https://acme.my.salesforce.com",
+        }
 
 
 def _fake_source(monkeypatch, behaviour=None):
@@ -300,7 +367,7 @@ def test_read_mints_again_once_the_cached_token_has_expired(tmp_path, monkeypatc
     _fake_source(monkeypatch)
     assert client.get("/api/data", params={"source": "opps"}).status_code == 200
     key = ("acme.my", "cid")
-    byo._SF_TOKENS[key] = (0.0, byo._SF_TOKENS[key][1])              # force it past its TTL
+    byo._SF_TOKENS[key] = (0.0, byo._SF_TOKENS[key][1])  # force it past its TTL
     assert client.get("/api/data", params={"source": "opps"}).status_code == 200
     assert len(mint.calls) == 2
 
@@ -321,7 +388,7 @@ def test_read_retries_once_when_salesforce_says_the_session_expired(tmp_path, mo
     seen = _fake_source(monkeypatch, behaviour)
     response = client.get("/api/data", params={"source": "opps"})
     assert response.status_code == 200, response.text
-    assert len(mint.calls) == 2                                       # a fresh token for the retry
+    assert len(mint.calls) == 2  # a fresh token for the retry
     assert [kwargs["session_id"] for _, kwargs in seen] == ["tok1", "tok2"]
 
 
@@ -348,10 +415,12 @@ def test_read_is_forbidden_once_the_user_is_removed_from_the_app(tmp_path, monke
     _fake_source(monkeypatch)
     assert client.get("/api/data", params={"source": "opps"}).status_code == 200
 
-    monkeypatch.setenv("CXC_SALESFORCE_APPS", json.dumps({"default": _app("bob")}))   # operator revokes
+    monkeypatch.setenv(
+        "CXC_SALESFORCE_APPS", json.dumps({"default": _app("bob")})
+    )  # operator revokes
     response = client.get("/api/data", params={"source": "opps"})
-    assert response.status_code == 403                                # a real 403, not a 502
-    assert len(mint.calls) == 1                                       # and no new token was minted
+    assert response.status_code == 403  # a real 403, not a 502
+    assert len(mint.calls) == 1  # and no new token was minted
 
 
 def test_a_token_failure_surfaces_as_a_bad_gateway_without_secrets(tmp_path, monkeypatch):
@@ -359,7 +428,9 @@ def test_a_token_failure_surfaces_as_a_bad_gateway_without_secrets(tmp_path, mon
     _register(client)
 
     def refuse(*args, **kwargs):
-        raise SalesforceOAuthError("Salesforce OAuth token request failed: invalid client credentials")
+        raise SalesforceOAuthError(
+            "Salesforce OAuth token request failed: invalid client credentials"
+        )
 
     monkeypatch.setattr(byo, "salesforce_oauth_token", refuse)
     response = client.get("/api/data", params={"source": "opps"})
@@ -373,12 +444,14 @@ def test_scheduled_refresh_path_enforces_the_users_list(tmp_path, monkeypatch):
     client, store = _client(tmp_path, monkeypatch, {"default": _app()})
     _register(client)
     record = store.get_source("alice", "opps")
-    byo.authorize_saas_source("alice", record)                        # allowed: no error
+    byo.authorize_saas_source("alice", record)  # allowed: no error
     monkeypatch.setenv("CXC_SALESFORCE_APPS", json.dumps({"default": _app("bob")}))
     with pytest.raises(PermissionError):
         byo.authorize_saas_source("alice", record)
     with pytest.raises(PermissionError):
         byo._read_saas_source(record, owner="alice")
     # Non-OAuth sources are untouched by the check.
-    byo.authorize_saas_source("alice", {"kind": "salesforce", "conn_url": json.dumps({"username": "u"})})
+    byo.authorize_saas_source(
+        "alice", {"kind": "salesforce", "conn_url": json.dumps({"username": "u"})}
+    )
     byo.authorize_saas_source("alice", {"kind": "servicenow", "conn_url": "{}"})
