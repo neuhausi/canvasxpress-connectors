@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from typing import Any, List, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 _SELECT_ONLY = re.compile(r"^\s*select\b", re.IGNORECASE)
 # The field list sits between the first SELECT and its FROM (SOQL has no leading CTEs).
@@ -25,9 +26,85 @@ class ReadOnlyViolation(ValueError):
     """Raised when a statement is not a SOQL SELECT."""
 
 
+class SalesforceOAuthError(RuntimeError):
+    """Raised when Salesforce refuses an OAuth token request.
+
+    The message carries only what Salesforce itself reports (``error`` /
+    ``error_description``) or the HTTP status — never the client id or secret.
+    """
+
+
 def assert_read_only(soql: str) -> None:
     if not _SELECT_ONLY.match(soql or ""):
         raise ReadOnlyViolation("Only a SOQL SELECT query is allowed")
+
+
+# A My Domain name as it appears before ".salesforce.com" ("acme.my", "acme-dev-ed.develop.my",
+# "login"). Restricting it to host characters keeps a configured value from steering the token
+# request anywhere but a *.salesforce.com host.
+_DOMAIN_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$")
+
+
+def salesforce_oauth_token(domain: str, client_id: str, client_secret: str,
+                           session=None, timeout: float = 30) -> dict:
+    """Mint an access token with the OAuth 2.0 **client credentials** flow.
+
+    No user password or security token is involved: the connected app's client id and secret
+    identify the integration, and Salesforce runs it as the "Run As" user configured on that
+    app. The token is short-lived, so mint one per use (or cache it briefly) and never store it.
+
+    :param domain: My Domain name — the host without ``.salesforce.com`` (``"acme.my"``).
+    :param client_id: The app's consumer key.
+    :param client_secret: The app's consumer secret.
+    :param session: Inject a prebuilt ``requests.Session`` (used in tests).
+    :param timeout: Seconds to wait for Salesforce.
+    :returns: ``{"access_token": ..., "instance_url": "https://<host>"}``.
+    :raises ValueError: If ``domain`` is not a plain host name or a credential is missing.
+    :raises SalesforceOAuthError: If Salesforce does not return an access token.
+    """
+    name = (domain or "").strip()
+    if name.endswith(".salesforce.com"):
+        name = name[:-len(".salesforce.com")]
+    if not _DOMAIN_RE.match(name):
+        raise ValueError("domain must be a Salesforce My Domain name such as 'acme.my'")
+    if not client_id or not client_secret:
+        raise ValueError("client_id and client_secret are required")
+
+    host = name + ".salesforce.com"
+    if session is None:
+        # Lazy import so the core package doesn't require requests.
+        import requests
+
+        session = requests.Session()
+    response = session.post(
+        "https://" + host + "/services/oauth2/token",
+        data={"grant_type": "client_credentials", "client_id": client_id,
+              "client_secret": client_secret},
+        headers={"Accept": "application/json"}, timeout=timeout)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    token = payload.get("access_token")
+    if response.status_code != 200 or not token:
+        # Salesforce explains a refusal in error / error_description; an HTML page (a wrong
+        # host) has neither, so fall back to the status code alone.
+        reason = payload.get("error_description") or payload.get("error") \
+            or "HTTP %s" % response.status_code
+        if response.status_code == 420 and not payload:
+            # Salesforce answers a My Domain name that does not exist with an HTML "setting
+            # things up" page, which reads like a provisioning delay but is a mistyped name.
+            reason += " (the My Domain name %r may not exist - check it for typos)" % name
+        raise SalesforceOAuthError("Salesforce OAuth token request failed: %s" % reason)
+    # The token will be sent to whatever instance_url names, so accept only an https
+    # *.salesforce.com host (defense in depth; the request above already went to one).
+    instance_url = payload.get("instance_url") or "https://" + host
+    parts = urlsplit(instance_url)
+    if parts.scheme != "https" or not (parts.hostname or "").endswith(".salesforce.com"):
+        raise SalesforceOAuthError("Salesforce returned an unexpected instance_url")
+    return {"access_token": token, "instance_url": instance_url}
 
 
 def soql_field_names(soql: str) -> List[str]:

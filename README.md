@@ -284,19 +284,198 @@ pip install "canvasxpress-connectors[salesforce]"
 ```
 
 ```python
+import os
 from cx_connectors.sources import SalesforceSource
 from cx_connectors.sources.base import to_cx
 
 data = to_cx(SalesforceSource(
     "SELECT Name, Amount, StageName, Account.Name FROM Opportunity WHERE IsClosed = true",
-    username="integration@acme.com", password="…", security_token="…",
-    domain="login",                      # "test" for a sandbox
+    username="integration@acme.com",
+    password=os.environ["SF_PASSWORD"],          # keep secrets out of code and specs
+    security_token=os.environ["SF_TOKEN"],
+    domain="acme.my",                            # see "Building the domain" below
 ))
 # or session-based auth: SalesforceSource(soql, session_id="…", instance_url="https://…")
 ```
 
 Use a least-privilege Salesforce **integration user** with read-only object/field permissions.
 `query_all` follows the API's paging cursors, so large result sets come back complete.
+
+#### Recommended: sign in with an OAuth app (no password, no token)
+
+The server signs in as an integration with the OAuth 2.0 **client credentials** flow. Nothing a
+user types contains a credential: the app's My Domain, consumer key and consumer secret live only
+in the server's environment, and a registered source just *names* the app.
+
+1. **In Salesforce, create an app for the integration** (an External Client App; older orgs use a
+   Connected App). Enable OAuth with the `api` scope and **Enable Client Credentials Flow**; if
+   the form asks for a callback URL, any HTTPS URL will do because this flow never redirects. In
+   the app's policies set **Run As** to a dedicated integration user: every query runs with that
+   user's permissions. Copy the **Consumer Key** and **Consumer Secret** (Salesforce asks you to
+   verify your identity first). The flow works only against your My Domain host, not
+   `login.salesforce.com` or `test.salesforce.com` (see [Building the domain](#building-the-domain)).
+2. **Define the app in the server's environment**, one JSON entry per app:
+
+   ```bash
+   export CXC_SALESFORCE_APPS='{
+     "default": {"domain": "acme.my", "client_id": "<consumer key>", "client_secret": "<consumer secret>",
+                 "users": ["alice", "bob"]}
+   }'
+   ```
+
+   `users` lists who may use the app; `"*"` allows everyone who can sign in, and leaving it out
+   allows nobody. Keep the value in your secrets manager or a protected `.env`. It is read on every
+   request, so rotating the secret or editing `users` takes effect without touching any source.
+3. **Register a source that names the app.** Send `{"name": …, "kind": "salesforce", "soql": …,
+   "oauth_app": "default"}` (or pick the app in the web form's *OAuth app* list).
+   `GET /api/salesforce/apps` returns the app names the signed-in user may use, never a domain,
+   key or secret.
+
+What this protects:
+
+- The stored source holds only the app name, so no credential reaches the database, an API
+  response or a dashboard spec.
+- A user cannot choose a domain or a secret, so a registered source cannot make the server send a
+  secret anywhere else.
+- The `users` list is re-checked on every read, scheduled dashboard refreshes included, so
+  removing a user stops their sources at once.
+- Access tokens are short-lived, kept in memory for about ten minutes, and never stored. If
+  Salesforce reports an expired session the token is replaced and the query retried once.
+
+Everyone allowed to use an app can read whatever its Run As user can, so give different audiences
+different apps and integration users. To refuse stored username/password/token logins on a server
+altogether, set `CXC_SALESFORCE_PASSWORD_AUTH=off`.
+
+#### Username, password and token (the older login)
+
+Salesforce is retiring the SOAP `login()` call this uses (see Troubleshooting), so prefer the OAuth
+app above for anything long-lived.
+
+| Value | Where it comes from |
+|---|---|
+| `username` | The user's login name (Setup → Users). It is often *not* the person's email address. |
+| `password` | The user's Salesforce password. |
+| `security_token` | Emailed when you use **Reset My Security Token** (avatar → Settings → My Personal Information). Case-sensitive; the connector appends it to the password for you. |
+| `domain` | Your org's My Domain name, built as described next. |
+| `soql` | A `SELECT` query (read-only; anything else is rejected). |
+
+#### Building the domain
+
+Sign in to the org and look at the browser address bar. Take the host, drop the trailing
+`.salesforce.com` (or `.salesforce-setup.com` on Lightning Setup pages), and pass the rest as
+`domain`:
+
+| Org type | Host in the browser | `domain` |
+|---|---|---|
+| Production | `acme.my.salesforce.com` | `acme.my` |
+| Developer Edition | `acme-dev-ed.develop.my.salesforce.com` | `acme-dev-ed.develop.my` |
+| Sandbox | `acme--uat.sandbox.my.salesforce.com` | `acme--uat.sandbox.my` |
+| Generic login endpoint | `login.salesforce.com` | `login` (`test` for a sandbox) |
+
+Prefer your org's My Domain name over `login`. Copy it character by character: a name that does
+not exist is **not** reported as a bad host. Salesforce answers it with an HTML "Stay Tuned / We are setting things up" page (HTTP
+420), which looks like an org that is still provisioning but is really a typo. A quick check
+that the host is real:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://acme.my.salesforce.com/services/data/   # 200
+```
+
+#### One-time Salesforce setup (username/password login only)
+
+Salesforce turns SOAP `login()`, which the username/password login uses, off by default in new
+orgs. The OAuth app above does not need any of these steps.
+
+1. **Enable it:** Setup → User Interface → **Enable SOAP API login()**. It cannot be switched
+   back off from that page.
+2. **Grant the user the "Use Any API Auth" permission:** Setup → Permission Sets → New → System
+   Permissions → check **Use Any API Auth** → Save → Manage Assignments → assign the integration
+   user. Without it the login fails with *SOAP Login requires the Use Any API Auth user
+   permission*.
+3. **Mind the security token.** Changing the password issues a new token and the old one stops
+   working, so reset the token *after* the last password change and use the newest one. Salesforce
+   does not ask for a token from an IP range listed under Setup → Network Access, so you can trust
+   your server's address instead and leave `security_token` empty.
+
+#### Registering it as a source (web app and dashboards)
+
+Sign in to the app (`POST /auth/login`), then register the source. With an OAuth app the body
+carries only its name (nothing to store or encrypt):
+
+```bash
+curl -b cookies.txt -H 'Content-Type: application/json' -X POST https://your-host/connectors/api/sources -d '{
+  "name": "salesforce-opps",
+  "kind": "salesforce",
+  "soql": "SELECT Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity",
+  "oauth_app": "default"
+}'
+```
+
+With the older username/password login the credentials are stored **encrypted**
+(`ENCRYPTION_KEY`) and are private to the user who registered the source:
+
+```bash
+curl -b cookies.txt -H 'Content-Type: application/json' -X POST https://your-host/connectors/api/sources -d '{
+  "name": "salesforce-opps",
+  "kind": "salesforce",
+  "soql": "SELECT Name, StageName, Amount, CloseDate, Account.Name FROM Opportunity",
+  "auth": {"username": "integration@acme.com", "password": "…",
+           "security_token": "…", "domain": "acme.my"}
+}'
+curl -b cookies.txt 'https://your-host/connectors/api/data?source=salesforce-opps'
+```
+
+A dashboard panel then reads it live with the same name:
+`{"kind": "connector", "url": "/connectors/api/data?source=salesforce-opps"}`. The source must be
+registered by the same user who is signed in to the dashboards app.
+
+#### How records become chart data
+
+The first selected field becomes the sample axis, numeric fields become variables
+(`y.vars`), and text and date fields become annotations (`x`). For the query above that gives
+`y.vars = ["Amount"]` and annotations `StageName`, `CloseDate` and `Account.Name`. Roll up in
+the chart rather than in SOQL, for example a Bar with `groupingFactors: ["StageName"]` and
+`summaryType: "sum"`. The whole result set is returned (`query_all` pages through it, and the
+`CX_MAX_ROWS` cap that guards SQL queries does not apply), so keep the query selective with a
+`WHERE` clause or a `LIMIT`.
+
+**Aggregate queries are not supported.** `SUM()`, `COUNT()` and other aggregate columns are
+silently dropped from the result, so select the record fields and aggregate in the chart.
+
+#### Troubleshooting
+
+When a login fails, Salesforce reports a generic `INVALID_LOGIN`. The real reason is in
+**Setup → Login History** (the Status column on the row for your attempt):
+
+| Status in Login History | Meaning and fix |
+|---|---|
+| Failed: SOAP Login Disabled | SOAP `login()` is off. Do setup step 1. |
+| Failed: SOAP Login requires the Use Any API Auth user permission | Do setup step 2. |
+| Invalid Password | The password and token do not match as a pair. Redo step 3. |
+| Password Lockout | Too many failures. Wait about 15 minutes. |
+
+For an OAuth app, the error text comes straight back to the caller:
+
+| Message | Meaning and fix |
+|---|---|
+| `…token request failed: client identifier invalid` | The consumer key is wrong. Re-copy it from the Salesforce app. |
+| `…token request failed: HTTP 420 (the My Domain name … may not exist …)` | The `domain` in `CXC_SALESFORCE_APPS` is mistyped. |
+| `Salesforce OAuth app '…' is not available to this user` (HTTP 403) | The app name is wrong or the user is not in its `users` list. The two look identical on purpose. |
+| `CXC_SALESFORCE_APPS is not valid JSON` (HTTP 500) | Fix the server's environment value. |
+
+If the token request succeeds but the query fails, the Run As user lacks access to the object or
+field: grant it on that user's profile or permission set.
+
+Other things to know:
+
+- **`ModuleNotFoundError: simple_salesforce`:** install the extra in the *same* virtualenv that
+  runs the app (`pip install "canvasxpress-connectors[salesforce]"`).
+- **Auto-refresh retries a bad login.** A dashboard source with a refresh interval re-runs the
+  query, and so retries the stored login, every interval. After a credential change, fix or remove
+  the source promptly so failed logins do not pile up into a lockout.
+- **SOAP `login()` is being retired** by Salesforce in the Summer '27 release (see the
+  [`login()` reference](https://developer.salesforce.com/docs/atlas.en-us.api.meta/api/sforce_api_calls_login.htm)).
+  The `session_id` + `instance_url` form accepts a session you obtain another way, such as OAuth.
 
 ### ServiceNow (Table API)
 
@@ -400,11 +579,45 @@ a pin bound to a dashboard panel, read live through this connector.
 The BYO web app (`create_byo_app` / the `/connectors` demo) registers these too, not just
 databases. The **Type** selector on the register-source form switches between *SQL database*,
 *Salesforce (SOQL)*, *ServiceNow (Table API)*, and *Pins board*; ServiceNow offers **Basic** or
-**OAuth 2.0** auth. Credentials are stored **encrypted** exactly like a connection string — for
+**OAuth 2.0** auth; Salesforce offers an **OAuth app** (the default: pick one the server operator
+defined, so no password is entered) or **Username, password and token**. Credentials are stored **encrypted** exactly like a connection string — for
 ServiceNow OAuth, the refresh/password credentials are stored and a bearer token is minted per
 request. The `POST /api/sources` body carries `kind` (`"salesforce"`/`"servicenow"`/`"pins"`) plus
 its config (an `auth` object, or for pins a `board_type` + `pin` + `config`); `GET /api/data?source=<name>`
 then runs the SOQL query / Table API read / pin read and reshapes it.
+
+### Showing a stored source without showing its secrets
+
+A host that offers an *edit* form for a source (the dashboards Builder does) should never send
+the stored password back to the browser. Two helpers make that safe:
+
+```python
+from cx_connectors.connmask import mask_conn_url, unmask_conn_url
+from cx_connectors.kinds import connector_type
+
+stored = "databricks://token:dapi123@dbc-1.cloud.databricks.com?http_path=/sql/1.0/warehouses/abc"
+shown = mask_conn_url(stored)
+# 'databricks://token:********@dbc-1.cloud.databricks.com?http_path=/sql/1.0/warehouses/abc'
+unmask_conn_url(shown, stored) == stored            # True: the form was saved untouched
+connector_type("sql", stored)                       # 'databricks'
+```
+
+- `mask_conn_url` hides the password in `user:password@host`, any query parameter whose name
+  contains `pass`, `secret` or `token` (or ends in `key`), and a `PWD=` / `Password=` setting inside
+  an ODBC connect string. Hosts, paths, user names and the other parameters stay readable.
+- `unmask_conn_url(url, stored_url)` puts the stored secrets back for a URL that still carries
+  `********`. It does so **only while the scheme, host and port are unchanged**; pointing a source
+  at a new server means typing the password again, so a stored password can never be redirected.
+- In the web app, registering a SQL source with `********` in `conn_url` restores the password from
+  the source of the same name, or from the one named in `secret_from` (to reuse another of the
+  user's own connections). It is always one of that user's own sources, never anyone else's.
+- `connector_type(kind, conn_url)` names a source: `salesforce`, `servicenow`, `pins`, `packed`,
+  `databricks`, `databricks-viewer` (no credential stored), or the database dialect
+  (`postgresql`, `mysql`, `snowflake`, …).
+
+The dashboards server applies the same masking to its `GET /api/connectors/source` read-back, and
+masks the secret fields of Salesforce, ServiceNow and pins sources. For the user-facing guides see
+[Connecting your data](https://github.com/neuhausi/canvasxpress-dashboards/blob/main/docs/connecting-your-data.md).
 
 ## Parameterized queries (live-data controls)
 

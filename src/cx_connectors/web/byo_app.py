@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,6 +25,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from ..connmask import MASK, unmask_conn_url
 from ..databricks_oauth import (
     OAuthExchangeFailed,
     ViewerSessionRequired,
@@ -35,7 +37,7 @@ from ..sources.packed import PackedMatrixSource
 from ..sources.pins_board import BOARD_TYPES as PINS_BOARD_TYPES
 from ..sources.pins_board import PinsBoardSource
 from ..sources.salesforce import ReadOnlyViolation as SoqlReadOnlyViolation
-from ..sources.salesforce import SalesforceSource
+from ..sources.salesforce import SalesforceSource, salesforce_oauth_token
 from ..sources.servicenow import ServiceNowSource, servicenow_oauth_token
 from ..sources.simulated import SimulatedLiveSource
 from ..sources.sql import ReadOnlyViolation, SqlSource, bind_param_names
@@ -169,20 +171,137 @@ def _pins_config_from_body(body: dict) -> dict:
     return {"board_type": board_type, "pin": pin, "config": board_cfg}
 
 
-def _read_saas_source(record: dict):
+# ---- Salesforce OAuth apps ----------------------------------------------------------------
+# An OAuth app (My Domain, client id, client secret) is defined ONLY in the server's
+# environment (CXC_SALESFORCE_APPS, a JSON object); a registered source just names one. A
+# user can therefore never supply a domain or secret of their own, nor make the server send a
+# secret to a host of their choosing, and no credential is stored in the sources table.
+_SF_APPS_ENV = "CXC_SALESFORCE_APPS"
+_SF_PASSWORD_AUTH_ENV = "CXC_SALESFORCE_PASSWORD_AUTH"
+_SF_TOKEN_TTL = 600.0          # seconds a minted token is reused; Salesforce sessions last longer
+_SF_TOKENS: dict = {}          # (domain, client_id) -> (expires_at, {"access_token", "instance_url"})
+
+
+def _salesforce_apps() -> dict:
+    """The operator-defined OAuth apps, keyed by name (read on each call so edits apply).
+
+    :returns: ``{name: {"domain", "client_id", "client_secret", "users"}}``; ``{}`` when unset.
+    :raises RuntimeError: If the environment value is not a JSON object of objects.
+    """
+    raw = (os.getenv(_SF_APPS_ENV) or "").strip()
+    if not raw:
+        return {}
+    try:
+        apps = json.loads(raw)
+    except ValueError:
+        raise RuntimeError("%s is not valid JSON" % _SF_APPS_ENV)
+    if not isinstance(apps, dict) or not all(isinstance(app, dict) for app in apps.values()):
+        raise RuntimeError("%s must be a JSON object of app name -> settings" % _SF_APPS_ENV)
+    return apps
+
+
+def _salesforce_app_allows(app: dict, user: str) -> bool:
+    """Whether ``user`` may use ``app``: only when ``users`` lists them (or ``"*"``). Deny by default."""
+    users = app.get("users")
+    if isinstance(users, str):
+        users = [users]
+    return isinstance(users, list) and ("*" in users or user in users)
+
+
+def _salesforce_app_for(user: str, name: str) -> dict:
+    """Resolve an OAuth app for a user.
+
+    An unknown app and one the user may not use are reported identically, so app names cannot
+    be probed.
+
+    :raises PermissionError: If the app does not exist or the user may not use it.
+    :raises RuntimeError: If the operator's configuration is malformed or incomplete.
+    """
+    app = _salesforce_apps().get(name)
+    if app is None or not _salesforce_app_allows(app, user):
+        raise PermissionError("Salesforce OAuth app %r is not available to this user" % name)
+    if not (app.get("domain") and app.get("client_id") and app.get("client_secret")):
+        raise RuntimeError("Salesforce OAuth app %r needs domain, client_id and client_secret" % name)
+    return app
+
+
+def _salesforce_password_auth_allowed() -> bool:
+    """Whether sources may be registered with a stored username/password/token (default yes)."""
+    return (os.getenv(_SF_PASSWORD_AUTH_ENV) or "on").strip().lower() not in ("off", "0", "false", "no")
+
+
+def _salesforce_token(app: dict, fresh: bool = False) -> dict:
+    """A bearer token for an OAuth app, minted on demand and reused briefly.
+
+    :param fresh: Skip the cache (used after Salesforce reports an expired session).
+    """
+    key = (app["domain"], app["client_id"])
+    cached = _SF_TOKENS.get(key)
+    if cached and not fresh and cached[0] > time.monotonic():
+        return cached[1]
+    token = salesforce_oauth_token(app["domain"], app["client_id"], app["client_secret"])
+    _SF_TOKENS[key] = (time.monotonic() + _SF_TOKEN_TTL, token)
+    return token
+
+
+def _read_salesforce_oauth(soql: str, app: dict):
+    """Run a SOQL query as an OAuth app, minting a token and retrying once if it has expired."""
+    for attempt in (0, 1):
+        token = _salesforce_token(app, fresh=bool(attempt))
+        try:
+            return SalesforceSource(soql, session_id=token["access_token"],
+                                    instance_url=token["instance_url"]).read()
+        except Exception as exc:
+            # simple_salesforce raises SalesforceExpiredSession on a 401; by name so the
+            # optional dependency is not imported here.
+            if attempt == 0 and type(exc).__name__ == "SalesforceExpiredSession":
+                continue
+            raise
+
+
+def authorize_saas_source(user: str, record: dict) -> None:
+    """Raise if ``user`` may not read this stored source (a no-op for non-OAuth sources).
+
+    Registration checks this once, but the operator can later narrow an app's ``users``; call
+    it before every read so a revoked user stops reading immediately.
+
+    :raises PermissionError: If the source names an OAuth app the user may no longer use.
+    :raises RuntimeError: If that app's configuration is broken.
+    """
+    if record.get("kind") != "salesforce":
+        return
+    auth = json.loads(record["conn_url"]) if record.get("conn_url") else {}
+    if auth.get("oauth_app"):
+        _salesforce_app_for(user, auth["oauth_app"])
+
+
+def _read_saas_source(record: dict, owner: Optional[str] = None):
     """Build the Salesforce / ServiceNow / pins source for a stored record and read it.
 
     The record's ``conn_url`` holds the decrypted JSON auth/query blob. For ServiceNow with
     OAuth, a short-lived bearer token is minted per read; the password/refresh credentials are
-    what's stored, never the access token.
+    what's stored, never the access token. A Salesforce source that names an ``oauth_app``
+    stores no credential at all: the app's secret is looked up in the server environment and a
+    token is minted from it.
 
     :param record: A ``store.get_source`` record with ``kind`` ``"salesforce"`` /
         ``"servicenow"`` / ``"pins"``.
+    :param owner: The source's owner. When given, an OAuth app's ``users`` list is enforced
+        here too (callers that already ran :func:`authorize_saas_source` may omit it).
     :returns: ``(header, rows)`` from the source's ``read()``.
     """
     kind = record.get("kind")
     if kind == "salesforce":
         auth = json.loads(record["conn_url"]) if record["conn_url"] else {}
+        if auth.get("oauth_app"):
+            if owner is not None:
+                app = _salesforce_app_for(owner, auth["oauth_app"])
+            else:
+                app = _salesforce_apps().get(auth["oauth_app"])
+                if not app or not (app.get("domain") and app.get("client_id")
+                                   and app.get("client_secret")):
+                    raise RuntimeError("Salesforce OAuth app %r is not configured" % auth["oauth_app"])
+            return _read_salesforce_oauth(record["sql"], app)
         return SalesforceSource(record["sql"], **auth).read()
 
     if kind == "pins":
@@ -322,6 +441,19 @@ def create_byo_app(
     def list_sources(request: Request):
         return {"sources": store.list_sources(require_user(request))}
 
+    @app.get("/api/salesforce/apps")
+    def salesforce_apps(request: Request):
+        """The Salesforce OAuth apps this user may register a source against (names only —
+        never a domain, client id or secret), and whether a stored password login is accepted."""
+        user = require_user(request)
+        try:
+            apps = _salesforce_apps()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        return {"apps": sorted(name for name, config in apps.items()
+                               if _salesforce_app_allows(config, user)),
+                "password_auth": _salesforce_password_auth_allowed()}
+
     @app.post("/api/sources")
     async def add_source(request: Request):
         user = require_user(request)
@@ -336,12 +468,33 @@ def create_byo_app(
         if kind == "salesforce":
             soql = (body.get("soql") or "").strip()
             auth = body.get("auth") or {}
+            oauth_app = (body.get("oauth_app") or "").strip()
             if not soql:
                 raise HTTPException(status_code=400, detail="soql is required")
             try:
                 SalesforceSource(soql, client=object())  # validates read-only, no connect
             except SoqlReadOnlyViolation as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
+            if oauth_app:
+                # An OAuth app is named, never described: its domain and secret live only in
+                # the server environment, so nothing credential-like is accepted or stored.
+                if auth:
+                    raise HTTPException(status_code=400,
+                                        detail="Use either oauth_app or auth, not both")
+                try:
+                    _salesforce_app_for(user, oauth_app)
+                except PermissionError as exc:
+                    raise HTTPException(status_code=403, detail=str(exc))
+                except RuntimeError as exc:
+                    raise HTTPException(status_code=500, detail=str(exc))
+                store.save_source(user, name, json.dumps({"oauth_app": oauth_app}), soql,
+                                  kind="salesforce")
+                return {"sources": store.list_sources(user)}
+            if not _salesforce_password_auth_allowed():
+                raise HTTPException(
+                    status_code=403,
+                    detail="This server does not accept a stored Salesforce username/password; "
+                           "use oauth_app (see GET /api/salesforce/apps)")
             store.save_source(user, name, json.dumps(auth), soql, kind="salesforce")
             return {"sources": store.list_sources(user)}
 
@@ -360,6 +513,17 @@ def create_byo_app(
         sql = (body.get("sql") or "").strip()
         if not (conn_url and sql):
             raise HTTPException(status_code=400, detail="conn_url and sql are required")
+        if MASK in conn_url:
+            # An edit form shows a stored password as "********" and sends it back unchanged.
+            # Restore the real one from the source being edited (the same name) or copied
+            # (``secret_from``) — always one of THIS user's own — and only while the server
+            # is unchanged, so the secret cannot be redirected somewhere new.
+            original = store.get_source(user, (body.get("secret_from") or "").strip() or name)
+            stored = original["conn_url"] if original and (original.get("kind") or "sql") == "sql" else None
+            try:
+                conn_url = unmask_conn_url(conn_url, stored)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         try:
             SqlSource(conn_url, sql)  # validates read-only without connecting
         except ReadOnlyViolation as exc:
@@ -380,6 +544,14 @@ def create_byo_app(
         record = store.get_source(user, source)
         if not record:
             raise HTTPException(status_code=404, detail="No such source for this user")
+        # A Salesforce source that names an OAuth app may be revoked after registration; check
+        # now, outside the catch-all below, so a revoked user gets a real 403 (not a 502).
+        try:
+            authorize_saas_source(user, record)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
         # Resolve a viewer-OAuth Databricks URL to a freshly-tokened one up front,
         # BEFORE the generic `except -> 502` below, so a missing-viewer 403 or a
         # token-exchange error surfaces its real cause. SaaS sources (salesforce /
@@ -409,7 +581,7 @@ def create_byo_app(
 
             # SaaS/REST sources: run the SOQL query / Table API / pin read and reshape.
             if record.get("kind") in ("salesforce", "servicenow", "pins"):
-                header, rows = _read_saas_source(record)
+                header, rows = _read_saas_source(record, owner=user)
                 return JSONResponse(rows_to_cx(header, rows))
 
             sql = record["sql"]

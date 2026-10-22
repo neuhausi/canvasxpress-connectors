@@ -73,11 +73,27 @@
       <div id="grpSf" class="hidden">
         <div class="row"><label>SOQL</label><textarea id="sfSoql"
              placeholder="SELECT Name, Amount, StageName FROM Opportunity"></textarea></div>
-        <div class="row"><label>Username</label><input id="sfUser" type="text" autocomplete="off"></div>
-        <div class="row"><label>Password</label><input id="sfPass" type="password" autocomplete="off"></div>
-        <div class="row"><label>Sec. token</label><input id="sfToken" type="password" autocomplete="off"></div>
-        <div class="row"><label>Domain</label>
-          <select id="sfDomain"><option value="login">login (prod)</option><option value="test">test (sandbox)</option></select>
+        <div class="row"><label>Sign in</label>
+          <select id="sfAuth">
+            <option value="oauth">OAuth app (set up on the server)</option>
+            <option value="password">Username, password and token</option>
+          </select>
+        </div>
+        <!-- OAuth: the app's domain and secret live in the server's environment; only its name is chosen here. -->
+        <div id="sfOauth">
+          <div class="row"><label>OAuth app</label><select id="sfApp"></select></div>
+          <div class="row"><label></label><small id="sfAppHint"></small></div>
+        </div>
+        <!-- Password: stored encrypted. Prefer an OAuth app; Salesforce is retiring this login. -->
+        <div id="sfPassword" class="hidden">
+          <div class="row"><label>Username</label><input id="sfUser" type="text" autocomplete="off"></div>
+          <div class="row"><label>Password</label><input id="sfPass" type="password" autocomplete="off"></div>
+          <div class="row"><label>Sec. token</label><input id="sfToken" type="password" autocomplete="off"></div>
+          <div class="row"><label>Domain</label>
+            <input id="sfDomain" type="text" list="sfDomains" value="login" autocomplete="off"
+                   placeholder="acme.my (your My Domain), login, or test">
+            <datalist id="sfDomains"><option value="login"><option value="test"></datalist>
+          </div>
         </div>
       </div>
 
@@ -198,6 +214,40 @@
       document.getElementById("grpSf").classList.toggle("hidden", kind !== "salesforce");
       document.getElementById("grpSn").classList.toggle("hidden", kind !== "servicenow");
       document.getElementById("grpPin").classList.toggle("hidden", kind !== "pins");
+      if (kind === "salesforce") { loadSfApps(); }
+    }
+    // Salesforce: OAuth apps are defined on the server, so the form only offers their names
+    // (GET /api/salesforce/apps never returns a domain, client id or secret).
+    function syncSfAuth() {
+      var oauth = document.getElementById("sfAuth").value === "oauth";
+      document.getElementById("sfOauth").classList.toggle("hidden", !oauth);
+      document.getElementById("sfPassword").classList.toggle("hidden", oauth);
+    }
+    function loadSfApps() {
+      var select = document.getElementById("sfApp");
+      var hint = document.getElementById("sfAppHint");
+      var auth = document.getElementById("sfAuth");
+      fetch(api("/api/salesforce/apps")).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (info) {
+          if (!info) { return; }                       // not signed in yet
+          select.innerHTML = "";
+          info.apps.forEach(function (name) {
+            var option = document.createElement("option");
+            option.value = option.textContent = name;
+            select.appendChild(option);
+          });
+          auth.querySelector('option[value="password"]').disabled = !info.password_auth;
+          if (info.apps.length) {
+            hint.textContent = "No password is entered or stored: the server signs in with this app.";
+          } else if (info.password_auth) {
+            auth.value = "password";
+            hint.textContent = "";
+          } else {
+            hint.textContent = "No OAuth app is available to your account. Ask the server operator to add one.";
+          }
+          if (!info.password_auth) { auth.value = "oauth"; }
+          syncSfAuth();
+        });
     }
     function syncSnAuth() {
       document.getElementById("snOauth").classList.toggle(
@@ -213,8 +263,9 @@
     }
     document.getElementById("sKind").addEventListener("change", syncKind);
     document.getElementById("snAuth").addEventListener("change", syncSnAuth);
+    document.getElementById("sfAuth").addEventListener("change", syncSfAuth);
     document.getElementById("pinBoard").addEventListener("change", syncPinBoard);
-    syncKind(); syncSnAuth(); syncPinBoard();
+    syncKind(); syncSnAuth(); syncSfAuth(); syncPinBoard();
 
     function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -222,6 +273,9 @@
     function buildSourceBody() {
       var kind = document.getElementById("sKind").value;
       if (kind === "salesforce") {
+        if (val("sfAuth") === "oauth") {
+          return { name: val("sName"), kind: kind, soql: val("sfSoql"), oauth_app: val("sfApp") };
+        }
         return { name: val("sName"), kind: kind, soql: val("sfSoql"), auth: {
           username: val("sfUser"), password: val("sfPass"),
           security_token: val("sfToken"), domain: val("sfDomain") } };
