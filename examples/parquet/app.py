@@ -39,7 +39,8 @@ def data(request: Request):
         if groups:
             header = ["id"] + list(header)
             rows = [[" · ".join(str(v) for v in r[:len(groups)])] + list(r) for r in rows]
-        return JSONResponse(rows_to_cx(header, rows) if rows else {"y": {"vars": [], "smps": [], "data": []}},
+        empty = {"y": {"vars": [], "smps": [], "data": []}}
+        return JSONResponse(rows_to_cx(header, rows) if rows else empty,
                             headers={"X-Cx-Rows": str(len(rows))})
     return JSONResponse(to_cx(src))
 

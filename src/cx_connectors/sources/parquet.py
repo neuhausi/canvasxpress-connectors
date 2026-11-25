@@ -24,10 +24,9 @@ filtering/aggregation stays on the pushdown path, unchanged.
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
 from urllib.parse import quote_plus
 
-from .sql import ReadOnlyViolation, SqlSource
+from .sql import SqlSource
 
 # DuckDB settings carried by the ``s3`` dict, mapped to their DuckDB config names.
 # Values ride the connection URL as query params; duckdb-engine applies them as
