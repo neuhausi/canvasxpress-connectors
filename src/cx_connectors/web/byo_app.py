@@ -515,6 +515,41 @@ def create_byo_app(
             store.save_source(user, name, json.dumps(cfg), "", kind="pins")
             return {"sources": store.list_sources(user)}
 
+        if kind == "parquet":
+            # A Parquet path/URL is turned into a (duckdb:/// conn_url, read_parquet SELECT)
+            # pair and STORED AS A PLAIN ``sql`` source, so /api/data, /api/columns, /api/join
+            # and pushdown all serve it unchanged. Local path, s3:// and https:// are supported;
+            # S3 settings ride the conn_url query string (so pushdown's bare create_engine
+            # inherits them). Imported here so a server with no Parquet source never needs DuckDB.
+            from ..sources.parquet import ParquetSource
+
+            source = (body.get("source") or "").strip()  # path or s3://…/https://… URL
+            if not source:
+                raise HTTPException(status_code=400,
+                                    detail="source (a Parquet path or URL) is required")
+            columns = body.get("columns") or None
+            s3 = body.get("s3") or None
+            where = (body.get("where") or "").strip() or None
+            try:
+                src = ParquetSource(source, columns=columns, s3=s3, where=where)
+            except (ValueError, ReadOnlyViolation) as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            conn_url = src.conn_url
+            if s3 and MASK in json.dumps(s3):
+                # An edit form sent a masked S3 secret back unchanged; restore it from the
+                # prior stored source's conn_url (the same name, or ``secret_from``), exactly
+                # as the SQL branch does — the built URL otherwise carries "********".
+                original = store.get_source(
+                    user, (body.get("secret_from") or "").strip() or name)
+                is_sql = bool(original) and (original.get("kind") or "sql") == "sql"
+                stored = original["conn_url"] if is_sql else None
+                try:
+                    conn_url = unmask_conn_url(conn_url, stored)
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
+            store.save_source(user, name, conn_url, src.sql)  # kind defaults to "sql"
+            return {"sources": store.list_sources(user)}
+
         # Default: a plain SQL SELECT source.
         conn_url = (body.get("conn_url") or "").strip()
         sql = (body.get("sql") or "").strip()

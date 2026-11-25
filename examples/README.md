@@ -10,6 +10,7 @@ pip install -e ".[all]"
 | Example | Source | Auth | Start here for… |
 |---------|--------|------|-----------------|
 | [`sqlite/`](sqlite/) | SQLite file | none | the smallest possible database → CanvasXpress |
+| [`parquet/`](parquet/) | Parquet file (DuckDB) | none (S3 optional) | a Parquet file → CanvasXpress with `ParquetSource` + pushdown; local or `s3://`/`https://` |
 | [`postgres/`](postgres/) | Postgres server | none | the same, against a real DB (driver swap only) |
 | [`databricks/`](databricks/) | Databricks SQL Warehouse | PAT / OAuth token | a cloud warehouse via the same `SqlSource` (URL swap only) |
 | [`google_sheets/`](google_sheets/) | Google Sheets | per-user OAuth | each user charts their own private sheet |

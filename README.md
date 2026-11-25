@@ -51,7 +51,7 @@ Return `data` as JSON from an endpoint; the page does `new CanvasXpress("cx", da
 | Layer | Module | Job |
 |-------|--------|-----|
 | Reshape | `cx_connectors.reshape` | rows → CanvasXpress `{y, x}` (core, no heavy deps) |
-| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource`, `PinsBoardSource` |
+| Sources | `cx_connectors.sources` | `DataSource` protocol + `SqlSource`, `ParquetSource`, `GoogleSheetsSource`, `GoogleAnalyticsSource`, `SalesforceSource`, `ServiceNowSource`, `PinsBoardSource` |
 | Live | `cx_connectors.sources` | `LiveSource` protocol (`poll()` → a `pushData` tick) + `SimulatedLiveSource`; streamed over SSE by `cx_connectors.web.sse` |
 | Store | `cx_connectors.store` | users (PBKDF2) + per-user **encrypted** connection strings |
 | Web | `cx_connectors.web` | `create_byo_app()` (databases + Salesforce/ServiceNow, login, live SSE streams: **`GET /api/streams`** lists them, **`GET /api/stream/<name>`** streams one; register your own with `live_streams=`) · `create_sheets_app()` (Google Sheets, OAuth) — mountable FastAPI apps |
@@ -173,6 +173,26 @@ controls exactly like any other parameterized query (see below) — a 10M-row so
 interactively without a warehouse. `read_parquet` also takes globs (`'data/*.parquet'`), HTTP(S)
 and S3 URLs (`INSTALL httpfs` on first use), and `read_csv_auto(...)` covers CSV. The read-only guard
 applies unchanged: it is still a single `SELECT`.
+
+**`ParquetSource` — just a path.** When the query is "read this Parquet file", you do not have to
+write the `duckdb:///` URL or the `read_parquet()` SELECT by hand. `ParquetSource` builds both for
+you and **is** a `SqlSource` (so `to_cx`, pushdown, join and `/api/columns` all work on it):
+
+```python
+from cx_connectors.sources import ParquetSource
+from cx_connectors.sources.base import to_cx
+
+to_cx(ParquetSource("expression.parquet"))                 # local file
+to_cx(ParquetSource("https://host/data.parquet"))          # public HTTPS (httpfs auto-loads)
+to_cx(ParquetSource("s3://bucket/orders/*.parquet",        # private S3 (glob) — credentials
+      s3={"region": "us-east-1",                            # ride the connection URL, so the
+          "access_key_id": "…", "secret_access_key": "…"})) # bare-engine pushdown/join inherit them
+```
+
+Local files and remote `s3://` / `https://` objects are supported; the `[duckdb]` extra is required.
+Registered through the web app (`kind:"parquet"`), a Parquet source is **stored as a plain `sql`
+source**, so pushdown, join, `/api/columns` and `/api/data` serve it with no special handling. See
+`examples/parquet/` for a runnable app.
 
 ### Databricks
 

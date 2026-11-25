@@ -3,7 +3,7 @@
 from .base import DataSource, LiveSource, Tick, format_sse, to_cx
 
 __all__ = ["DataSource", "LiveSource", "Tick", "format_sse", "to_cx",
-           "SqlSource", "GoogleSheetsSource",
+           "SqlSource", "ParquetSource", "GoogleSheetsSource",
            "GoogleAnalyticsSource", "SalesforceSource", "ServiceNowSource",
            "YahooFinanceSource", "YahooOptionsSource", "StooqSource",
            "AlphaVantageSource", "AlphaVantageOptionsSource", "NasdaqOptionsSource",
@@ -16,6 +16,9 @@ def __getattr__(name):
     if name == "SqlSource":
         from .sql import SqlSource
         return SqlSource
+    if name == "ParquetSource":
+        from .parquet import ParquetSource
+        return ParquetSource
     if name == "SimulatedLiveSource":
         from .simulated import SimulatedLiveSource
         return SimulatedLiveSource

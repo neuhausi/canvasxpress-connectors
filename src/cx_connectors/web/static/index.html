@@ -53,6 +53,7 @@
           <option value="salesforce">Salesforce (SOQL)</option>
           <option value="servicenow">ServiceNow (Table API)</option>
           <option value="pins">Pins board</option>
+          <option value="parquet">Parquet file (DuckDB)</option>
         </select>
       </div>
 
@@ -137,6 +138,24 @@
           <div class="row"><label>Version path</label><input id="pinUrlPath" type="text" placeholder="penguins/20240101T000000Z-abcd/"></div></div>
       </div>
 
+      <!-- Parquet file (DuckDB) -->
+      <div id="grpParquet" class="hidden">
+        <div class="row"><label>Source</label><input id="pqSource" type="text"
+             placeholder="orders.parquet  ·  s3://bucket/orders/*.parquet  ·  https://host/data.parquet"></div>
+        <div class="row" style="color:#888;font-size:13px;margin:-2px 0 6px 0">
+          A local path or a remote <code>s3://</code> / <code>https://</code> URL (DuckDB httpfs).
+          Stored as a read-only SQL source, so filtering/aggregation push down to DuckDB.
+        </div>
+        <div class="row"><label>Columns</label><input id="pqColumns" type="text"
+             placeholder="(optional) region, product, amount"></div>
+        <div id="pqS3" class="hidden">
+          <div class="row"><label>S3 region</label><input id="pqS3Region" type="text" placeholder="us-east-1"></div>
+          <div class="row"><label>Access key</label><input id="pqS3Key" type="text" autocomplete="off" placeholder="(optional)"></div>
+          <div class="row"><label>Secret key</label><input id="pqS3Secret" type="password" autocomplete="off" placeholder="(optional)"></div>
+          <div class="row"><label>Endpoint</label><input id="pqS3Endpoint" type="text" autocomplete="off" placeholder="(optional)"></div>
+        </div>
+      </div>
+
       <div class="row"><button id="addSource">Save source</button></div>
     </fieldset>
 
@@ -214,7 +233,13 @@
       document.getElementById("grpSf").classList.toggle("hidden", kind !== "salesforce");
       document.getElementById("grpSn").classList.toggle("hidden", kind !== "servicenow");
       document.getElementById("grpPin").classList.toggle("hidden", kind !== "pins");
+      document.getElementById("grpParquet").classList.toggle("hidden", kind !== "parquet");
       if (kind === "salesforce") { loadSfApps(); }
+    }
+    // Show the S3-credential fields only when the Parquet source is an s3:// URL.
+    function syncParquetS3() {
+      var source = document.getElementById("pqSource").value.trim();
+      document.getElementById("pqS3").classList.toggle("hidden", source.indexOf("s3://") !== 0);
     }
     // Salesforce: OAuth apps are defined on the server, so the form only offers their names
     // (GET /api/salesforce/apps never returns a domain, client id or secret).
@@ -265,7 +290,8 @@
     document.getElementById("snAuth").addEventListener("change", syncSnAuth);
     document.getElementById("sfAuth").addEventListener("change", syncSfAuth);
     document.getElementById("pinBoard").addEventListener("change", syncPinBoard);
-    syncKind(); syncSnAuth(); syncSfAuth(); syncPinBoard();
+    document.getElementById("pqSource").addEventListener("input", syncParquetS3);
+    syncKind(); syncSnAuth(); syncSfAuth(); syncPinBoard(); syncParquetS3();
 
     function val(id) { return document.getElementById(id).value.trim(); }
 
@@ -296,6 +322,23 @@
         else if (board === "s3") { config = { path: val("pinBucket"), region: val("pinRegion") }; }
         else if (board === "url") { config = { url: val("pinUrlRoot"), path: val("pinUrlPath") }; }
         return { name: val("sName"), kind: kind, board_type: board, pin: val("pinName"), config: config };
+      }
+      if (kind === "parquet") {
+        var body = { name: val("sName"), kind: kind, source: val("pqSource") };
+        var columns = val("pqColumns");
+        if (columns) {
+          body.columns = columns.split(",").map(function (c) { return c.trim(); })
+            .filter(function (c) { return c; });
+        }
+        if (val("pqSource").indexOf("s3://") === 0) {
+          var s3 = {};
+          if (val("pqS3Region")) { s3.region = val("pqS3Region"); }
+          if (val("pqS3Key")) { s3.access_key_id = val("pqS3Key"); }
+          if (val("pqS3Secret")) { s3.secret_access_key = val("pqS3Secret"); }
+          if (val("pqS3Endpoint")) { s3.endpoint = val("pqS3Endpoint"); }
+          if (Object.keys(s3).length) { body.s3 = s3; }
+        }
+        return body;
       }
       return { name: val("sName"), kind: "sql", conn_url: val("sConn"), sql: val("sSql") };
     }
